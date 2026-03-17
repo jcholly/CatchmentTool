@@ -1,0 +1,13 @@
+{
+    "depression_method": "breach",
+    "snap_distance": 10.0,
+    "min_catchment_area": 100.0,
+    "flow_accumulation_threshold": 100,
+    "comments": {
+        "depression_method": "Use 'breach' for more natural drainage or 'fill' for simplicity",
+        "snap_distance": "Distance in map units to snap pour points to flow network",
+        "min_catchment_area": "Minimum catchment area in square map units to include in output",
+        "flow_accumulation_threshold": "Number of upstream cells to define a stream channel"
+    }
+}
+

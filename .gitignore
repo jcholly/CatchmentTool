@@ -1,0 +1,37 @@
+# Build output
+CSharp/bin/
+CSharp/obj/
+
+# Visual Studio
+CSharp/.vs/
+*.user
+*.suo
+*.cache
+
+# Distribution artifacts
+Distribution/*.zip
+Distribution/TestExtract/
+Distribution/CatchmentTool.bundle/Contents/CatchmentTool.dll
+Distribution/CatchmentTool.bundle/Contents/Newtonsoft.Json.dll
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Data folder contents (keep .gitkeep)
+Data/*
+!Data/.gitkeep
+Distribution/CatchmentTool.bundle/Contents/Data/*
+!Distribution/CatchmentTool.bundle/Contents/Data/.gitkeep
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Large media
+*.mp4
+*.avi
+*.mov

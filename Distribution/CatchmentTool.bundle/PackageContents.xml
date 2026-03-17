@@ -1,0 +1,22 @@
+﻿<?xml Version="1.0.1" encoding="utf-8"?>
+<ApplicationPackage 
+    SchemaVersion="1.0.1" 
+    Name="CatchmentTool"
+    Description="Automated Catchment Delineation for Civil 3D - One-click watershed analysis using WhiteboxTools"
+    Author="Autodesk"
+    Version="1.0.1"
+    ProductCode="{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}">
+  
+  <CompanyDetails Name="Autodesk" />
+  
+  <Components>
+    <RuntimeRequirements OS="Win64" Platform="Civil3D" SeriesMin="R24.0" />
+    <ComponentEntry AppName="CatchmentTool" 
+                    Version="1.0.1" 
+                    ModuleName="./Contents/CatchmentTool.dll"
+                    AppType="Net" />
+  </Components>
+</ApplicationPackage>
+
+
+
