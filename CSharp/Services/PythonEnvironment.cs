@@ -64,15 +64,35 @@ namespace CatchmentTool.Services
 
         /// <summary>
         /// Search for a working Python 3 executable.
-        /// Tries py launcher, python, python3, and common install locations.
+        /// First checks for a bundled Python, then py launcher, then PATH, then common locations.
+        /// Skips the Windows Store Python stub.
         /// </summary>
         private string FindPython()
         {
-            // Candidates on PATH
+            // Priority 1: Check for bundled Python inside the plugin directory
+            string bundledPython = FindBundledPython();
+            if (bundledPython != null)
+            {
+                string ver = GetVersion(bundledPython);
+                if (ver != null && ver.Contains("3."))
+                {
+                    StatusCallback?.Invoke($"Found bundled {ver} at {bundledPython}");
+                    return bundledPython;
+                }
+            }
+
+            // Priority 2: Candidates on PATH (skip Windows Store stub)
             string[] candidates = new[] { "py", "python", "python3" };
 
             foreach (var candidate in candidates)
             {
+                // Skip the Windows Store stub
+                if (IsWindowsStoreStub(candidate))
+                {
+                    StatusCallback?.Invoke($"Skipping Windows Store stub: {candidate}");
+                    continue;
+                }
+
                 string version = GetVersion(candidate);
                 if (version != null && version.Contains("3."))
                 {
@@ -227,28 +247,58 @@ namespace CatchmentTool.Services
 
         /// <summary>
         /// Install missing packages via pip.
+        /// Uses safe argument passing (no shell, no string concatenation of package names).
         /// Returns true if all installs succeeded.
         /// </summary>
         public bool InstallPackages(IEnumerable<string> packages)
         {
-            string pkgList = string.Join(" ", packages);
-            StatusCallback?.Invoke($"Installing: {pkgList}");
+            // Validate package names against a safe pattern to prevent injection
+            var validPattern = new System.Text.RegularExpressions.Regex(
+                @"^[a-zA-Z0-9_\-]+([<>=!]+[\d.]+)?$");
+
+            var safePackages = new List<string>();
+            foreach (var pkg in packages)
+            {
+                if (!validPattern.IsMatch(pkg))
+                {
+                    StatusCallback?.Invoke($"Skipping invalid package name: '{pkg}'");
+                    continue;
+                }
+                safePackages.Add(pkg);
+            }
+
+            if (safePackages.Count == 0)
+            {
+                StatusCallback?.Invoke("No valid packages to install");
+                return true;
+            }
+
+            StatusCallback?.Invoke($"Installing: {string.Join(", ", safePackages)}");
 
             try
             {
-                string args = PythonPath == "py"
-                    ? $"-3 -m pip install {pkgList} --quiet"
-                    : $"-m pip install {pkgList} --quiet";
-
+                // Build arguments safely — UseShellExecute=false prevents shell interpretation
                 var psi = new ProcessStartInfo
                 {
                     FileName = PythonPath,
-                    Arguments = args,
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     CreateNoWindow = true
                 };
+
+                // Build the argument string safely (no cmd.exe shell)
+                var argParts = new List<string>();
+                if (PythonPath == "py")
+                    argParts.Add("-3");
+                argParts.Add("-m");
+                argParts.Add("pip");
+                argParts.Add("install");
+                argParts.Add("--no-input");
+                argParts.Add("--quiet");
+                argParts.AddRange(safePackages);
+
+                psi.Arguments = string.Join(" ", argParts);
 
                 var output = new StringBuilder();
                 var error = new StringBuilder();
@@ -308,6 +358,61 @@ namespace CatchmentTool.Services
         // -------------------------------------------------------------------
         // Helpers
         // -------------------------------------------------------------------
+
+        /// <summary>
+        /// Look for a bundled Python in the plugin's directory structure.
+        /// Expected path: {DLL dir}/Python/python-embed/python.exe
+        /// </summary>
+        private string FindBundledPython()
+        {
+            string dllDir = Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "";
+
+            string[] searchPaths = new[]
+            {
+                Path.Combine(dllDir, "Python", "python-embed", "python.exe"),
+                Path.Combine(dllDir, "..", "Python", "python-embed", "python.exe"),
+                Path.Combine(dllDir, "python-embed", "python.exe"),
+            };
+
+            foreach (var path in searchPaths)
+            {
+                string full = Path.GetFullPath(path);
+                if (File.Exists(full))
+                    return full;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Detect the Windows Store Python stub (0-byte exe in WindowsApps).
+        /// </summary>
+        private bool IsWindowsStoreStub(string executable)
+        {
+            try
+            {
+                // Resolve the full path via where.exe
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "where.exe",
+                    Arguments = executable,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    CreateNoWindow = true
+                };
+                using (var proc = Process.Start(psi))
+                {
+                    string output = proc.StandardOutput.ReadToEnd().Trim();
+                    proc.WaitForExit(5000);
+                    // The Store stub lives in Microsoft\WindowsApps
+                    if (output.Contains("WindowsApps", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            catch { }
+            return false;
+        }
 
         private string GetVersion(string executable)
         {

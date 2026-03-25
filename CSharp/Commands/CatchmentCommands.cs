@@ -978,13 +978,28 @@ namespace CatchmentTool.Commands
             return networkIds[result.Value - 1];
         }
         
-        private void WriteWorkflowConfig(string workingDir, SurfaceExportResult surfaceResult, 
+        private void WriteWorkflowConfig(string workingDir, SurfaceExportResult surfaceResult,
                                          StructureExtractionResult structureResult)
         {
+            // Detect drawing units and coordinate system for Python-side processing
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var drawingUnits = DrawingUnits.Detect(doc);
+
+            string csCode = "";
+            try
+            {
+                csCode = Autodesk.AutoCAD.ApplicationServices.Application
+                    .GetSystemVariable("CGEOCS") as string ?? "";
+            }
+            catch { }
+
             var config = new
             {
                 created = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                 working_directory = workingDir,
+                drawing_units = drawingUnits.UnitLabel,
+                is_metric = drawingUnits.IsMetric,
+                autodesk_cs_code = csCode,
                 surface = new
                 {
                     name = surfaceResult.SurfaceName,

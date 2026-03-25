@@ -320,7 +320,14 @@ max_x = min_x + (cols * cell_size)
 min_y = max_y - (rows * cell_size)
 
 transform = from_bounds(min_x, min_y, max_x, max_y, cols, rows)
-crs = CRS.from_epsg(32613)
+
+# Resolve CRS from metadata (no more hardcoded EPSG)
+from crs_utils import resolve_crs
+crs = resolve_crs(
+    dem_path=bil_path,
+    json_metadata=meta,
+    drawing_units=meta.get('drawing_units', 'ft'),
+)
 
 tif_path = base_dir / 'surface_dem_geo.tif'
 profile = dict(driver='GTiff', dtype='float32', width=cols, height=rows, count=1, crs=crs, transform=transform, nodata=-9999.0, compress='lzw')

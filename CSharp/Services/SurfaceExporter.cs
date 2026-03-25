@@ -161,7 +161,14 @@ namespace CatchmentTool.Services
         }
         
         /// <summary>
+        /// The raw Autodesk CS-MAP code from the drawing (e.g., "TX83-CF").
+        /// Set during GetDrawingCoordinateSystem() for inclusion in JSON metadata.
+        /// </summary>
+        private string _autodeskCsCode;
+
+        /// <summary>
         /// Reads the drawing's coordinate system as a WKT string for the .prj file.
+        /// Also stores the raw Autodesk CS-MAP code in _autodeskCsCode for JSON metadata.
         /// Returns null if no coordinate system is assigned.
         /// </summary>
         private string GetDrawingCoordinateSystem()
@@ -181,6 +188,20 @@ namespace CatchmentTool.Services
                     csCode = unitZone["CoordinateSystemCode"]?.ToString();
                 }
                 catch { }
+
+                // Also try the CGEOCS system variable as a reliable fallback
+                if (string.IsNullOrEmpty(csCode))
+                {
+                    try
+                    {
+                        csCode = Autodesk.AutoCAD.ApplicationServices.Application
+                            .GetSystemVariable("CGEOCS") as string;
+                    }
+                    catch { }
+                }
+
+                // Store the raw Autodesk code for JSON metadata
+                _autodeskCsCode = csCode;
 
                 if (string.IsNullOrEmpty(csCode))
                 {
@@ -295,6 +316,9 @@ namespace CatchmentTool.Services
 
             // Write JSON metadata for the Python script
             string jsonPath = Path.ChangeExtension(path, ".json");
+            // Detect drawing units for Python-side processing
+            var drawingUnits = DrawingUnits.Detect(_doc);
+
             var metadata = new
             {
                 surface_name = result.SurfaceName,
@@ -310,7 +334,10 @@ namespace CatchmentTool.Services
                 bil_file = dataPath,
                 header_file = headerPath,
                 coordinate_system = coordinateSystem ?? "",
-                prj_file = !string.IsNullOrEmpty(coordinateSystem) ? prjPath : ""
+                prj_file = !string.IsNullOrEmpty(coordinateSystem) ? prjPath : "",
+                autodesk_cs_code = _autodeskCsCode ?? "",
+                drawing_units = drawingUnits.UnitLabel,
+                is_metric = drawingUnits.IsMetric
             };
             
             string json = Newtonsoft.Json.JsonConvert.SerializeObject(metadata, Newtonsoft.Json.Formatting.Indented);
