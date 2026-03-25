@@ -67,6 +67,63 @@ class CatchmentDelineator:
         self.pour_points_path = None
         self.crs = None
         
+    def _resolve_crs(self):
+        """
+        Try to resolve CRS from companion files next to the input DEM.
+        Checks for .prj (WKT) and .json (metadata with coordinate_system field).
+        """
+        from rasterio.crs import CRS
+
+        dem_stem = self.dem_path.with_suffix('')  # strip extension
+
+        # Try .prj file (WKT format written by SurfaceExporter)
+        prj_path = dem_stem.with_suffix('.prj')
+        if not prj_path.exists():
+            # Also try alongside original input path
+            prj_path = Path(str(self.dem_path).replace('.tif', '').replace('.bil', '')).with_suffix('.prj')
+
+        if prj_path.exists():
+            try:
+                wkt = prj_path.read_text().strip()
+                if wkt and not wkt.startswith('LOCAL_CS'):
+                    crs = CRS.from_wkt(wkt)
+                    logger.info(f"CRS from .prj file: {crs}")
+                    return crs
+                elif wkt.startswith('LOCAL_CS'):
+                    # Contains a coordinate system code name — try to parse it
+                    import re
+                    match = re.search(r'LOCAL_CS\["(.+?)"\]', wkt)
+                    if match:
+                        cs_code = match.group(1)
+                        logger.info(f"Attempting to resolve coordinate system code: {cs_code}")
+                        try:
+                            crs = CRS.from_user_input(cs_code)
+                            logger.info(f"CRS resolved from code: {crs}")
+                            return crs
+                        except Exception:
+                            logger.warning(f"Could not resolve coordinate system code: {cs_code}")
+            except Exception as e:
+                logger.warning(f"Failed to read .prj file: {e}")
+
+        # Try .json metadata (written by SurfaceExporter)
+        json_path = dem_stem.with_suffix('.json')
+        if json_path.exists():
+            try:
+                import json as _json
+                meta = _json.loads(json_path.read_text())
+                cs = meta.get('coordinate_system', '')
+                if cs:
+                    try:
+                        crs = CRS.from_user_input(cs)
+                        logger.info(f"CRS from metadata JSON: {crs}")
+                        return crs
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        return None
+
     def _load_config(self, config_file: str) -> dict:
         """Load configuration from JSON file or return defaults."""
         defaults = {
@@ -119,13 +176,18 @@ class CatchmentDelineator:
             nodata = src.nodata
             
             # WhiteboxTools requires GeoTIFF with geokeys (CRS info)
-            # If no CRS, use a placeholder (local/unknown CRS)
+            # Try to resolve CRS from multiple sources
             out_crs = self.crs
             if out_crs is None:
-                # Use a simple projected CRS placeholder - WhiteboxTools just needs geokeys
+                out_crs = self._resolve_crs()
+            if out_crs is None:
+                # Last resort: use a generic projected placeholder so WhiteboxTools has geokeys.
+                # This will not cause spatial errors because the DEM coordinates
+                # are already in the drawing's native unit system.
                 from rasterio.crs import CRS
                 out_crs = CRS.from_epsg(32617)  # UTM zone 17N as placeholder
-                logger.info(f"No CRS found, using placeholder: {out_crs}")
+                logger.warning("No CRS found from .prj or metadata — using generic placeholder. "
+                               "Assign a coordinate system in Civil 3D Drawing Settings to avoid this.")
             
             # Create new profile with proper settings
             profile = {

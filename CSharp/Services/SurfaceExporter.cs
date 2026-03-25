@@ -161,6 +161,64 @@ namespace CatchmentTool.Services
         }
         
         /// <summary>
+        /// Reads the drawing's coordinate system as a WKT string for the .prj file.
+        /// Returns null if no coordinate system is assigned.
+        /// </summary>
+        private string GetDrawingCoordinateSystem()
+        {
+            try
+            {
+                // Civil 3D stores the coordinate system in the drawing settings
+                var civilDoc = Autodesk.Civil.ApplicationServices.CivilApplication.ActiveDocument;
+                var settings = civilDoc.Settings;
+
+                // DrawingSettings.TransformationSettings.CoordinateSystemCode
+                string csCode = null;
+                try
+                {
+                    var drawingSettings = settings.DrawingSettings;
+                    var unitZone = drawingSettings.UnitZoneSettings;
+                    csCode = unitZone["CoordinateSystemCode"]?.ToString();
+                }
+                catch { }
+
+                if (string.IsNullOrEmpty(csCode))
+                {
+                    ReportProgress("No coordinate system assigned to drawing - .prj file skipped");
+                    ReportProgress("Tip: Assign a coordinate system in Drawing Settings > Units and Zone");
+                    return null;
+                }
+
+                ReportProgress($"Drawing coordinate system: {csCode}");
+
+                // Use AutoCAD's coordinate system catalog to get the WKT
+                try
+                {
+                    var csDb = Autodesk.AutoCAD.DatabaseServices.HostApplicationServices.Current
+                        .GetType().GetMethod("GetCoordinateSystemWkt",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+                    if (csDb != null)
+                    {
+                        string wkt = csDb.Invoke(
+                            Autodesk.AutoCAD.DatabaseServices.HostApplicationServices.Current,
+                            new object[] { csCode }) as string;
+                        if (!string.IsNullOrEmpty(wkt))
+                            return wkt;
+                    }
+                }
+                catch { }
+
+                // Fallback: store just the code so Python can resolve it
+                return $"LOCAL_CS[\"{csCode}\"]";
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Returns a fixed 1 ft x 1 ft cell size for DEM export.
         /// This provides a good balance between accuracy and performance for catchment delineation.
         /// </summary>
@@ -226,10 +284,15 @@ namespace CatchmentTool.Services
                 }
             }
             
-            // Also write a .prj file if we have coordinate system info
-            // (User should set this based on their Civil 3D drawing coordinate system)
+            // Write .prj file from the drawing's coordinate system
             string prjPath = Path.ChangeExtension(path, ".prj");
-            
+            string coordinateSystem = GetDrawingCoordinateSystem();
+            if (!string.IsNullOrEmpty(coordinateSystem))
+            {
+                File.WriteAllText(prjPath, coordinateSystem);
+                _doc.Editor.WriteMessage($"\n  Written: {prjPath}");
+            }
+
             // Write JSON metadata for the Python script
             string jsonPath = Path.ChangeExtension(path, ".json");
             var metadata = new
@@ -245,7 +308,9 @@ namespace CatchmentTool.Services
                 max_elevation = result.Bounds.MaxZ,
                 bounds = new { result.Bounds.MinX, result.Bounds.MinY, result.Bounds.MaxX, result.Bounds.MaxY },
                 bil_file = dataPath,
-                header_file = headerPath
+                header_file = headerPath,
+                coordinate_system = coordinateSystem ?? "",
+                prj_file = !string.IsNullOrEmpty(coordinateSystem) ? prjPath : ""
             };
             
             string json = Newtonsoft.Json.JsonConvert.SerializeObject(metadata, Newtonsoft.Json.Formatting.Indented);

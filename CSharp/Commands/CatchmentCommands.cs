@@ -488,69 +488,60 @@ namespace CatchmentTool.Commands
         }
         
         /// <summary>
-        /// Run the Python catchment delineation script.
+        /// Run the Python catchment delineation script using PythonEnvironment.
         /// </summary>
-        private string RunPythonDelineation(string demPath, string inletsPath, string outputPath, 
+        private string RunPythonDelineation(string demPath, string inletsPath, string outputPath,
                                             string workingDir, Editor ed)
         {
-            // Find the Python script path (relative to the DLL location)
-            string dllPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-            string dllDir = Path.GetDirectoryName(dllPath);
-            
-            // Try several possible locations for the Python script
-            string[] possiblePaths = new[]
+            // Discover Python and script
+            var pyEnv = new PythonEnvironment();
+            pyEnv.StatusCallback = (msg) => ed.WriteMessage($"        {msg}\n");
+
+            if (!pyEnv.Discover())
             {
-                Path.Combine(dllDir, "Python", "catchment_delineation.py"),
-                Path.Combine(dllDir, "..", "Python", "catchment_delineation.py"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), 
-                            "CatchmentTool", "Python", "catchment_delineation.py")
-            };
-            
-            string scriptPath = null;
-            foreach (var path in possiblePaths)
-            {
-                if (File.Exists(path))
+                if (pyEnv.PythonPath == null)
                 {
-                    scriptPath = path;
-                    break;
+                    ed.WriteMessage("  ✗ Python 3 not found on this machine.\n");
+                    ed.WriteMessage("    Install Python 3.10+ from https://www.python.org/downloads/\n");
+                    ed.WriteMessage("    Make sure 'Add Python to PATH' is checked during installation.\n");
+                }
+                else
+                {
+                    ed.WriteMessage("  ✗ catchment_delineation.py script not found.\n");
+                    ed.WriteMessage("    Reinstall the CatchmentTool plugin bundle.\n");
+                }
+                return "Python environment not available";
+            }
+
+            ed.WriteMessage($"  [4.2] {pyEnv.PythonVersion}\n");
+            ed.WriteMessage($"  [4.2] Script: {pyEnv.ScriptPath}\n\n");
+
+            // Check and install missing packages
+            var missing = pyEnv.CheckMissingPackages();
+            if (missing.Count > 0)
+            {
+                ed.WriteMessage($"  [4.3] Installing missing packages: {string.Join(", ", missing)}...\n");
+                if (!pyEnv.InstallPackages(missing))
+                {
+                    ed.WriteMessage("  ✗ Failed to install required packages.\n");
+                    ed.WriteMessage($"    Try: pip install {string.Join(" ", missing)}\n");
+                    return "Package installation failed";
                 }
             }
-            
-            if (scriptPath == null)
-            {
-                ed.WriteMessage("  ✗ Python script not found. Searched:\n");
-                foreach (var path in possiblePaths)
-                {
-                    ed.WriteMessage($"      {path}\n");
-                }
-                return "Script not found";
-            }
-            
-            ed.WriteMessage($"  [4.2] Python script: {scriptPath}\n\n");
-            
+
             // Build the command
-            string arguments = $"\"{scriptPath}\" " +
-                              $"--dem \"{demPath}\" " +
+            string arguments = $"--dem \"{demPath}\" " +
                               $"--inlets \"{inletsPath}\" " +
                               $"--output \"{outputPath}\" " +
                               $"--working-dir \"{workingDir}\"";
-            
-            ed.WriteMessage($"  [4.3] Running: python {Path.GetFileName(scriptPath)}\n");
-            
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "python",
-                Arguments = arguments,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                WorkingDirectory = Path.GetDirectoryName(scriptPath)
-            };
-            
+
+            ed.WriteMessage($"  [4.3] Running catchment delineation...\n");
+
+            var startInfo = pyEnv.BuildProcessStartInfo(arguments);
+
             var output = new StringBuilder();
             var error = new StringBuilder();
-            
+
             try
             {
                 using (var process = new Process { StartInfo = startInfo })
@@ -561,7 +552,7 @@ namespace CatchmentTool.Commands
                         {
                             output.AppendLine(e.Data);
                             // Log key progress lines
-                            if (e.Data.Contains("Step") || e.Data.Contains("COMPLETE") || 
+                            if (e.Data.Contains("Step") || e.Data.Contains("COMPLETE") ||
                                 e.Data.Contains("Created") || e.Data.Contains("ERROR"))
                             {
                                 ed.WriteMessage($"        {e.Data}\n");
@@ -575,20 +566,20 @@ namespace CatchmentTool.Commands
                             error.AppendLine(e.Data);
                         }
                     };
-                    
+
                     process.Start();
                     process.BeginOutputReadLine();
                     process.BeginErrorReadLine();
-                    
+
                     // Wait for completion with timeout
                     bool completed = process.WaitForExit(300000); // 5 minute timeout
-                    
+
                     if (!completed)
                     {
                         process.Kill();
                         return "Python script timed out after 5 minutes";
                     }
-                    
+
                     if (process.ExitCode != 0)
                     {
                         return $"Python exited with code {process.ExitCode}: {error}";
@@ -599,7 +590,7 @@ namespace CatchmentTool.Commands
             {
                 return $"Failed to run Python: {ex.Message}";
             }
-            
+
             return output.ToString();
         }
         

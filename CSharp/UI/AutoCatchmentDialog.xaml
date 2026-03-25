@@ -83,29 +83,26 @@
                     
                     <!-- DEM Cell Size -->
                     <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,10,8">
-                        <TextBlock Text="DEM Cell Size (ft):" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="lblCellSize" Text="DEM Cell Size:" FontWeight="SemiBold"/>
                         <ComboBox x:Name="cmbCellSize" Height="24" Margin="0,3,0,0">
-                            <ComboBoxItem Content="0.5 (Highest detail, slow)" Tag="0.5"/>
-                            <ComboBoxItem Content="1.0 (High detail)" Tag="1.0" IsSelected="True"/>
-                            <ComboBoxItem Content="2.0 (Medium)" Tag="2.0"/>
-                            <ComboBoxItem Content="5.0 (Fast)" Tag="5.0"/>
+                            <!-- Items populated by code-behind based on drawing units -->
                         </ComboBox>
                     </StackPanel>
-                    
+
                     <!-- Snap Distance -->
                     <StackPanel Grid.Row="0" Grid.Column="1" Margin="10,0,0,8">
-                        <TextBlock Text="Snap Distance (ft):" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="lblSnapDistance" Text="Snap Distance:" FontWeight="SemiBold"/>
                         <TextBlock Text="Distance to snap inlets to flow path" FontSize="10" Foreground="Gray"/>
                         <TextBox x:Name="txtSnapDistance" Text="10" Height="24" Margin="0,3,0,0"/>
                     </StackPanel>
-                    
+
                     <!-- Breach Distance -->
                     <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,10,8">
                         <TextBlock Text="Breach Distance (cells):" FontWeight="SemiBold"/>
                         <TextBlock Text="Max distance to breach depressions" FontSize="10" Foreground="Gray"/>
                         <TextBox x:Name="txtBreachDistance" Text="10" Height="24" Margin="0,3,0,0"/>
                     </StackPanel>
-                    
+
                     <!-- Depression Method -->
                     <StackPanel Grid.Row="1" Grid.Column="1" Margin="10,0,0,8">
                         <TextBlock Text="Depression Handling:" FontWeight="SemiBold"/>
@@ -114,31 +111,31 @@
                             <ComboBoxItem Content="Fill" Tag="fill"/>
                         </ComboBox>
                     </StackPanel>
-                    
+
                     <!-- Min Catchment Area -->
                     <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,0,10,8">
-                        <TextBlock Text="Min Catchment Area (sq ft):" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="lblMinArea" Text="Min Catchment Area:" FontWeight="SemiBold"/>
                         <TextBlock Text="Filter out tiny catchments" FontSize="10" Foreground="Gray"/>
                         <TextBox x:Name="txtMinArea" Text="100" Height="24" Margin="0,3,0,0"/>
                     </StackPanel>
-                    
+
                     <!-- Simplify Tolerance -->
                     <StackPanel Grid.Row="2" Grid.Column="1" Margin="10,0,0,8">
-                        <TextBlock Text="Simplify Tolerance (ft):" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="lblSimplifyTolerance" Text="Simplify Tolerance:" FontWeight="SemiBold"/>
                         <TextBlock Text="0 = no simplification" FontSize="10" Foreground="Gray"/>
                         <TextBox x:Name="txtSimplifyTolerance" Text="1" Height="24" Margin="0,3,0,0"/>
                     </StackPanel>
-                    
+
                     <!-- Burn Pipes -->
                     <StackPanel Grid.Row="3" Grid.Column="0" Margin="0,0,10,0">
-                        <CheckBox x:Name="chkBurnPipes" Content="Burn pipes into DEM" 
+                        <CheckBox x:Name="chkBurnPipes" Content="Burn pipes into DEM"
                                   IsChecked="True" FontWeight="SemiBold"/>
                         <TextBlock Text="Lowers DEM along pipe paths" FontSize="10" Foreground="Gray" Margin="20,0,0,0"/>
                     </StackPanel>
-                    
+
                     <!-- Burn Depth -->
                     <StackPanel Grid.Row="3" Grid.Column="1" Margin="10,0,0,0">
-                        <TextBlock Text="Burn Depth (ft):" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="lblBurnDepth" Text="Burn Depth:" FontWeight="SemiBold"/>
                         <TextBlock Text="How deep to lower pipe cells" FontSize="10" Foreground="Gray"/>
                         <TextBox x:Name="txtBurnDepth" Text="3" Height="24" Margin="0,3,0,0"/>
                     </StackPanel>
