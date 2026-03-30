@@ -28,7 +28,6 @@ namespace CatchmentTool.UI
         public int BreachDistance { get; set; } = 10;
         public string DepressionMethod { get; set; } = "breach";
         public double MinCatchmentArea { get; set; } = 100.0;
-        public double SimplifyTolerance { get; set; } = 1.0;
         public bool BurnPipes { get; set; } = true;
         public double BurnDepth { get; set; } = 3.0;
     }
@@ -80,13 +79,13 @@ namespace CatchmentTool.UI
             lblCellSize.Text = $"DEM Cell Size ({_units.UnitLabel}):";
             lblSnapDistance.Text = $"Snap Distance ({_units.UnitLabel}):";
             lblMinArea.Text = $"Min Catchment Area ({_units.AreaLabel}):";
-            lblSimplifyTolerance.Text = $"Simplify Tolerance ({_units.UnitLabel}):";
+
             lblBurnDepth.Text = $"Burn Depth ({_units.UnitLabel}):";
 
             // Set defaults
             txtSnapDistance.Text = _units.DefaultSnapDistance.ToString();
             txtMinArea.Text = _units.DefaultMinArea.ToString();
-            txtSimplifyTolerance.Text = _units.DefaultSimplifyTolerance.ToString();
+
             txtBurnDepth.Text = _units.DefaultBurnDepth.ToString();
         }
 
@@ -385,7 +384,7 @@ namespace CatchmentTool.UI
                 BreachDistance = GetIntValue(txtBreachDistance, 10),
                 DepressionMethod = GetDepressionMethod(),
                 MinCatchmentArea = GetDoubleValue(txtMinArea, _units.DefaultMinArea),
-                SimplifyTolerance = GetDoubleValue(txtSimplifyTolerance, _units.DefaultSimplifyTolerance),
+
                 BurnPipes = chkBurnPipes.IsChecked == true,
                 BurnDepth = GetDoubleValue(txtBurnDepth, _units.DefaultBurnDepth)
             };
@@ -463,7 +462,7 @@ namespace CatchmentTool.UI
             Log($"    Breach distance: {settings.BreachDistance} cells");
             Log($"    Depression method: {settings.DepressionMethod}");
             Log($"    Min catchment area: {settings.MinCatchmentArea} {al}");
-            Log($"    Simplify tolerance: {settings.SimplifyTolerance} {ul}");
+
             Log($"    Burn pipes: {(settings.BurnPipes ? $"Yes (depth: {settings.BurnDepth} {ul})" : "No")}");
             Log("");
 

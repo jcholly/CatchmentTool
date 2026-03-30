@@ -216,8 +216,14 @@ namespace CatchmentTool.Services
             return missing;
         }
 
+        private static readonly System.Text.RegularExpressions.Regex SafePackageName =
+            new System.Text.RegularExpressions.Regex(@"^[a-zA-Z0-9_\-]+$");
+
         private bool IsPackageInstalled(string packageName)
         {
+            if (!SafePackageName.IsMatch(packageName))
+                return false;
+
             try
             {
                 var args = PythonPath == "py"

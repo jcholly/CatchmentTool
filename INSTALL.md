@@ -2,113 +2,52 @@
 
 ## Prerequisites
 
-### Python Environment
-- Python 3.10 or later
-- pip package manager
-
-### Civil 3D
-- AutoCAD Civil 3D 2026
-- .NET Framework 4.8
-
-### Visual Studio (for building C# plugin)
-- Visual Studio 2022 (Community edition is fine)
-- .NET Framework 4.8 targeting pack
+- **Civil 3D:** AutoCAD Civil 3D 2026
+- **Python:** 3.10 or later ([python.org/downloads](https://www.python.org/downloads/))
+- **.NET 8.0 SDK** (for building from source only)
 
 ---
 
-## Step 1: Install Python Dependencies
+## Option A: Install from ZIP (end users)
 
-Open a command prompt and navigate to the Python folder:
+1. Download `CatchmentTool-v1.0.0.zip` from the Releases page
+2. Extract it anywhere
+3. Right-click **Install.bat** and select **Run as administrator**
+   - This installs Python dependencies and copies the plugin bundle
+4. Start (or restart) Civil 3D
+
+## Option B: Build from Source (developers)
 
 ```powershell
-cd CatchmentTool\Python
+# Clone the repo
+git clone https://github.com/jcholly/CatchmentTool.git
+cd CatchmentTool
 
-# Install dependencies
-pip install -r requirements.txt
+# Install Python dependencies
+pip install -r Python/requirements.txt
+
+# Build C# plugin and install to ApplicationPlugins
+.\Build-Distribution.ps1 -Install
 ```
 
-This installs:
-- WhiteboxTools - hydrological analysis
-- rasterio - raster I/O
-- geopandas - vector data handling
-- shapely - geometry operations
-- numpy - numerical operations
+Restart Civil 3D after installing.
 
-### Verify WhiteboxTools Installation
+### Updating Python-only changes
+
+If you only changed Python files (no C# changes), you can redeploy without restarting Civil 3D:
 
 ```powershell
-python -c "import whitebox; wbt = whitebox.WhiteboxTools(); print(wbt.version())"
-```
-
-You should see the WhiteboxTools version printed.
-
----
-
-## Step 2: Build the Civil 3D Plugin
-
-### Option A: Using Visual Studio
-
-1. Open `CatchmentTool\CSharp\CatchmentTool.csproj` in Visual Studio 2022
-2. Update the Civil 3D reference paths if needed (in the .csproj file)
-3. Build the solution (Ctrl+Shift+B)
-4. The output DLL will be in `CatchmentTool\CSharp\bin\`
-
-### Option B: Using dotnet CLI
-
-```powershell
-cd CatchmentTool\CSharp
-
-# Restore and build
-dotnet build -c Release
+.\Build-Distribution.ps1 -Install -SkipBuild
 ```
 
 ---
 
-## Step 3: Load Plugin in Civil 3D
-
-### Manual Loading (for testing)
+## Verify Installation
 
 1. Open Civil 3D 2026
-2. Type `NETLOAD` at the command prompt
-3. Browse to `CatchmentTool\CSharp\bin\CatchmentTool.dll`
-4. Click Open
-
-### Automatic Loading (recommended)
-
-Create a file named `CatchmentTool.bundle` in your Civil 3D plugin folder:
-
-**Location:** `C:\Users\<username>\AppData\Roaming\Autodesk\ApplicationPlugins\`
-
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<ApplicationPackage 
-    SchemaVersion="1.0" 
-    Name="Catchment Delineation Tool" 
-    Description="Automated catchment delineation using WhiteboxTools"
-    Author="Your Name"
-    Version="1.0.0">
-    
-    <CompanyDetails Name="Your Company" />
-    
-    <Components>
-        <RuntimeRequirements OS="Win64" Platform="AutoCAD Civil 3D" SeriesMin="C3D2026" />
-        <ComponentEntry AppName="CatchmentTool" 
-                        ModuleName="./Contents/CatchmentTool.dll" 
-                        LoadOnAutoCADStartup="True" />
-    </Components>
-</ApplicationPackage>
-```
-
-Then copy `CatchmentTool.dll` and `Newtonsoft.Json.dll` to a `Contents` subfolder.
-
----
-
-## Step 4: Verify Installation
-
-1. Open Civil 3D 2026
-2. Open a drawing with a surface and pipe network
-3. Type `LISTPIPESTRUCTURES` to verify the plugin loaded
-4. You should see a list of structures in the command window
+2. Open a drawing with a TIN surface and pipe network
+3. Type `CATCHMENTAUTO` and press Enter
+4. The delineation dialog should appear
 
 ---
 
@@ -116,76 +55,37 @@ Then copy `CatchmentTool.dll` and `Newtonsoft.Json.dll` to a `Contents` subfolde
 
 | Command | Description |
 |---------|-------------|
-| `EXPORTCATCHMENTDATA` | Export surface DEM and inlet structures |
-| `IMPORTCATCHMENTS` | Import catchment polygons from WhiteboxTools |
-| `DELINEATECATCHMENTS` | Full workflow (export, process, import) |
-| `LISTPIPESTRUCTURES` | List all structures in a pipe network |
-
----
-
-## Typical Workflow
-
-1. **In Civil 3D:**
-   ```
-   Command: EXPORTCATCHMENTDATA
-   ```
-   - Select surface
-   - Select pipe network
-   - Choose working directory (or accept default)
-
-2. **In Command Prompt:**
-   ```powershell
-   cd "C:\path\to\CatchmentData"
-   python "C:\...\CatchmentTool\Python\run_delineation.py" .
-   ```
-
-3. **In Civil 3D:**
-   ```
-   Command: IMPORTCATCHMENTS
-   ```
-   - Select the generated `catchments.json` file
-   - Select pipe network
-   - Select surface
+| `CATCHMENTAUTO` | Opens a dialog to automatically delineate catchments from a surface and pipe network using WhiteboxTools |
+| `MAKECATCHMENTS` | Select existing closed polylines and convert them to Civil 3D Catchment objects with outlet structures assigned |
 
 ---
 
 ## Troubleshooting
 
-### "No inlet structures found"
-The tool looks for structures with names containing: inlet, catch basin, area drain, curb inlet, grate, etc. If your structures use different naming, you may need to modify the filter in `StructureExtractor.cs`.
+### Python not found
+The tool searches for Python in this order: bundled Python, `py` launcher, `python` on PATH, common install locations. Make sure Python 3.10+ is installed and on your PATH.
 
 ### WhiteboxTools errors
-Make sure Python can find the whitebox module:
+Verify WhiteboxTools is installed:
 ```powershell
-python -c "import whitebox; print(whitebox.__file__)"
+python -c "import whitebox; wbt = whitebox.WhiteboxTools(); print(wbt.version())"
 ```
 
-### DEM conversion issues
-If the BIL to GeoTIFF conversion fails, check that rasterio is properly installed:
-```powershell
-python -c "import rasterio; print(rasterio.__version__)"
+### Plugin not loading
+Check that the bundle exists at:
 ```
+C:\ProgramData\Autodesk\ApplicationPlugins\CatchmentTool.bundle\
+```
+The `PackageContents.xml` file in that directory tells Civil 3D to load the plugin.
 
-### Large surfaces
-For very large surfaces, the DEM export may take several minutes. Consider:
-- Using a coarser cell size (add `--cell-size` parameter in future version)
-- Exporting a smaller area of the surface
+### "No inlet structures found"
+The tool looks for structures with part families containing: inlet, catch basin, area drain, curb inlet, grate, etc. If your structures use different naming, modify the filter in `StructureExtractor.cs`.
 
 ---
 
-## Configuration
+## Uninstalling
 
-Create a `config.json` file in your working directory to customize delineation:
-
-```json
-{
-    "depression_method": "breach",
-    "snap_distance": 10.0,
-    "min_catchment_area": 100.0
-}
+Run `Uninstall.bat` from the distribution, or manually delete:
 ```
-
-- `depression_method`: "breach" (recommended) or "fill"
-- `snap_distance`: Distance to snap pour points to flow network (map units)
-- `min_catchment_area`: Minimum catchment size to include (sq map units)
-
+C:\ProgramData\Autodesk\ApplicationPlugins\CatchmentTool.bundle\
+```

@@ -1,48 +1,50 @@
 # Catchment Delineation Tool for Civil 3D
 
-**One-click automated watershed/catchment delineation** for Civil 3D pipe networks using WhiteboxTools.
+**Automated watershed/catchment delineation** for Civil 3D pipe networks using WhiteboxTools.
 
 ---
 
 ## Quick Install
 
 ### Prerequisites
-- **Python 3.10+** - Download from [python.org](https://www.python.org/downloads/)  
-  ⚠️ Check "Add Python to PATH" during installation!
-- **Civil 3D 2024 or later** (tested on 2026)
+- **Python 3.10+** - Download from [python.org](https://www.python.org/downloads/)
+  Check "Add Python to PATH" during installation!
+- **Civil 3D 2026**
 
 ### Installation Steps
 
 1. **Extract this ZIP** to any folder
-2. **Right-click `Install.bat`** → **Run as administrator**
+2. **Right-click `Install.bat`** and select **Run as administrator**
 3. **Restart Civil 3D** (if it was open)
 
-That's it! The installer will:
-- ✅ Check for Python
-- ✅ Install required Python packages (whitebox, rasterio, geopandas, etc.)
-- ✅ Copy the plugin to Civil 3D's ApplicationPlugins folder
+The installer will:
+- Check for Python
+- Install required Python packages (whitebox, rasterio, geopandas, shapely)
+- Copy the plugin to Civil 3D's ApplicationPlugins folder
 
 ---
 
-## Usage
+## Commands
 
-### Command: `CATCHMENTAUTO`
+### `CATCHMENTAUTO` - Automated Delineation
 
 1. Type `CATCHMENTAUTO` in Civil 3D and press Enter
-2. Select a **TIN Surface**
-3. Select a **Pipe Network**
-4. Check which **structure types** to use as inlets
-5. Click **Run Delineation**
+2. Select a **TIN Surface** and **Pipe Network**
+3. Check which **structure types** to use as inlets
+4. Click **Run Delineation**
 
-The tool will:
-- Export your surface as a DEM
-- Find all inlet structures
-- Run WhiteboxTools watershed analysis
-- Create catchment areas linked to each inlet
+The tool exports your surface as a DEM, runs WhiteboxTools watershed analysis, and creates Civil 3D Catchment objects linked to each inlet structure.
+
+### `MAKECATCHMENTS` - From Existing Linework
+
+1. Draw or import closed polylines representing catchment boundaries
+2. Type `MAKECATCHMENTS` and press Enter
+3. Select the polylines, then select the reference surface
+4. The tool finds the pipe network structure inside each polygon and creates Civil 3D Catchment objects with outlets assigned
 
 ### Analysis Settings (Optional)
 
-Expand "Analysis Settings" to fine-tune:
+Expand "Analysis Settings" in the CATCHMENTAUTO dialog to fine-tune:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -66,10 +68,6 @@ Run this in Command Prompt:
 pip install rasterio geopandas shapely fiona whitebox numpy
 ```
 
-### First run is slow
-- WhiteboxTools downloads its binaries on first use (~50MB)
-- Subsequent runs will be much faster
-
 ### Catchments look wrong
 - Try decreasing DEM Cell Size (e.g., 0.5 ft)
 - Enable "Burn Pipes" option
@@ -79,30 +77,10 @@ pip install rasterio geopandas shapely fiona whitebox numpy
 
 ## Uninstall
 
-Right-click `Uninstall.bat` → Run as administrator
-
----
-
-## Files Included
-
-```
-CatchmentTool/
-├── Install.bat          ← Double-click to install
-├── Uninstall.bat        ← Double-click to remove
-├── README.md            ← This file
-└── CatchmentTool.bundle/
-    ├── PackageContents.xml
-    └── Contents/
-        ├── CatchmentTool.dll
-        ├── Newtonsoft.Json.dll
-        ├── Data/
-        └── Python/
-            ├── catchment_delineation.py
-            └── requirements.txt
-```
+Right-click `Uninstall.bat` and select Run as administrator.
 
 ---
 
 ## Support
 
-For issues or feature requests, contact your IT administrator or the tool developer.
+For issues or feature requests: [github.com/jcholly/CatchmentTool](https://github.com/jcholly/CatchmentTool)

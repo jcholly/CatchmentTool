@@ -23,7 +23,7 @@ namespace CatchmentTool.Services
         public double DefaultCellSize { get; private set; }
         public double DefaultSnapDistance { get; private set; }
         public double DefaultMinArea { get; private set; }
-        public double DefaultSimplifyTolerance { get; private set; }
+
         public double DefaultBurnDepth { get; private set; }
 
         /// <summary>
@@ -54,7 +54,7 @@ namespace CatchmentTool.Services
                 units.DefaultCellSize = 0.3;           // ~1 ft
                 units.DefaultSnapDistance = 3.0;        // ~10 ft
                 units.DefaultMinArea = 10.0;            // ~100 sq ft
-                units.DefaultSimplifyTolerance = 0.3;
+
                 units.DefaultBurnDepth = 1.0;           // ~3 ft
             }
             else
@@ -64,7 +64,7 @@ namespace CatchmentTool.Services
                 units.DefaultCellSize = 1.0;
                 units.DefaultSnapDistance = 10.0;
                 units.DefaultMinArea = 100.0;
-                units.DefaultSimplifyTolerance = 1.0;
+
                 units.DefaultBurnDepth = 3.0;
             }
 

@@ -96,9 +96,8 @@ echo  ========================================================
 echo.
 echo  Next steps:
 echo    1. Start (or restart) Civil 3D
-echo    2. Type CATCHMENTAUTO and press Enter
-echo    3. Select your surface and pipe network
-echo    4. Click "Run Delineation"
+echo    2. Type CATCHMENTAUTO for automated delineation
+echo       or MAKECATCHMENTS to convert existing polylines
 echo.
 echo  For help, see README.md
 echo.

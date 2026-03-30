@@ -119,13 +119,6 @@
                         <TextBox x:Name="txtMinArea" Text="100" Height="24" Margin="0,3,0,0"/>
                     </StackPanel>
 
-                    <!-- Simplify Tolerance -->
-                    <StackPanel Grid.Row="2" Grid.Column="1" Margin="10,0,0,8">
-                        <TextBlock x:Name="lblSimplifyTolerance" Text="Simplify Tolerance:" FontWeight="SemiBold"/>
-                        <TextBlock Text="0 = no simplification" FontSize="10" Foreground="Gray"/>
-                        <TextBox x:Name="txtSimplifyTolerance" Text="1" Height="24" Margin="0,3,0,0"/>
-                    </StackPanel>
-
                     <!-- Burn Pipes -->
                     <StackPanel Grid.Row="3" Grid.Column="0" Margin="0,0,10,0">
                         <CheckBox x:Name="chkBurnPipes" Content="Burn pipes into DEM"

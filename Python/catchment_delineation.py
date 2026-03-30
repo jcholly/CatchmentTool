@@ -628,8 +628,6 @@ def main():
                         help='Unit for --min-area (default: sq_ft)')
     parser.add_argument('--smooth-radius', type=float, default=None,
                         help='Morphological smooth radius in map units, 0=none (default: auto = 3x cell size)')
-    parser.add_argument('--simplify-tolerance', type=float, default=None,
-                        help='(Deprecated, ignored — use --smooth-radius instead)')
     parser.add_argument('--burn-pipes',
                         help='Path to pipe lines GeoJSON for burning into DEM')
     parser.add_argument('--burn-depth', type=float, default=3.0,
