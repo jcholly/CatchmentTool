@@ -448,16 +448,11 @@ class CatchmentDelineator:
 
         min_area = self.config["_resolved_min_area"]
 
-        # Extract all polygons from raster and smooth stairstep edges.
-        # Morphological buffer(r).buffer(-r) rounds 90° raster corners — Douglas-Peucker
-        # does NOT work here because staircase corners are large deviations and are kept.
+        # Extract polygons from raster
         cell_size = getattr(self, 'cell_size', 1.0)
-        smooth_r = self.config.get("smooth_radius") or (cell_size * 1.5)
         polygons = []
         for geom, value in shapes(data.astype(np.int32), mask=mask, transform=transform):
             polygon = shape(geom)
-            if smooth_r and smooth_r > 0:
-                polygon = polygon.buffer(smooth_r).buffer(-smooth_r)
             area = polygon.area
             if area >= min_area:
                 polygons.append({
@@ -476,6 +471,23 @@ class CatchmentDelineator:
 
         watersheds_gdf = gpd.GeoDataFrame(polygons, crs=crs)
         logger.info(f"Vectorized {len(watersheds_gdf)} polygons above min area")
+
+        # Smooth + simplify raster stairstep edges while keeping adjacent
+        # catchments perfectly snapped. coverage_simplify treats the polygons
+        # as a coverage — shared edges are simplified identically, so no gaps
+        # or overlaps are introduced. Applied here (before spatial join) where
+        # the raster polygons form a perfect tiling.
+        smooth_tol = self.config.get("smooth_radius") or (cell_size * 2.0)
+        try:
+            from shapely import coverage_simplify
+            raw_geoms = np.array(list(watersheds_gdf.geometry), dtype=object)
+            simplified = list(coverage_simplify(raw_geoms, smooth_tol))
+            watersheds_gdf['geometry'] = simplified
+            watersheds_gdf['area'] = watersheds_gdf.geometry.area
+            avg_v = int(sum(len(g.exterior.coords) for g in simplified if g.geom_type == 'Polygon') / len(simplified))
+            logger.info(f"Coverage-simplified {len(simplified)} polygons (tol={smooth_tol:.1f}, ~{avg_v} verts avg)")
+        except Exception as e:
+            logger.warning(f"Coverage simplify failed ({e}), using raw raster polygons")
 
         # --- Spatial join: match pour points to polygons ---
         snapped_gdf = gpd.read_file(snapped_points)
@@ -615,7 +627,9 @@ def main():
                         default='sq_ft',
                         help='Unit for --min-area (default: sq_ft)')
     parser.add_argument('--smooth-radius', type=float, default=None,
-                        help='Morphological smooth radius in map units, 0=none (default: auto = 1.5x cell size)')
+                        help='Morphological smooth radius in map units, 0=none (default: auto = 3x cell size)')
+    parser.add_argument('--simplify-tolerance', type=float, default=None,
+                        help='(Deprecated, ignored — use --smooth-radius instead)')
     parser.add_argument('--burn-pipes',
                         help='Path to pipe lines GeoJSON for burning into DEM')
     parser.add_argument('--burn-depth', type=float, default=3.0,

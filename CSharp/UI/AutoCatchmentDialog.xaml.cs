@@ -660,8 +660,7 @@ namespace CatchmentTool.UI
                               $"--depression-method {settings.DepressionMethod} " +
                               $"--min-area {settings.MinCatchmentArea} " +
                               $"--area-unit {(_units.IsMetric ? "sq_m" : "sq_ft")} " +
-                              $"--drawing-units {(_units.IsMetric ? "m" : "ft")} " +
-                              $"--simplify-tolerance {settings.SimplifyTolerance}";
+                              $"--drawing-units {(_units.IsMetric ? "m" : "ft")}";
 
             if (settings.BurnPipes && !string.IsNullOrEmpty(pipesPath))
             {

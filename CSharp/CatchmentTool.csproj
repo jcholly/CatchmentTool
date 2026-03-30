@@ -59,5 +59,12 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
   </ItemGroup>
 
+  <!-- Copy Python scripts to output directory alongside the DLL -->
+  <ItemGroup>
+    <None Include="..\Python\*.py" CopyToOutputDirectory="PreserveNewest" Link="Python\%(Filename)%(Extension)" />
+    <None Include="..\Python\requirements.txt" CopyToOutputDirectory="PreserveNewest" Link="Python\requirements.txt" />
+    <None Include="..\Python\config_template.json" CopyToOutputDirectory="PreserveNewest" Link="Python\config_template.json" />
+  </ItemGroup>
+
 </Project>
 
