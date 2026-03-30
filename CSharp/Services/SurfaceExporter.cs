@@ -185,7 +185,7 @@ namespace CatchmentTool.Services
                 {
                     var drawingSettings = settings.DrawingSettings;
                     var unitZone = drawingSettings.UnitZoneSettings;
-                    csCode = unitZone["CoordinateSystemCode"]?.ToString();
+                    csCode = unitZone.CoordinateSystemCode;
                 }
                 catch { }
 

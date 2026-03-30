@@ -281,23 +281,34 @@ def resolve_crs(
         # Fall back to coordinate_system field (legacy)
         cs_raw = json_metadata.get('coordinate_system', '')
         if cs_raw:
-            # It might be WKT
-            try:
-                crs = CRS.from_wkt(cs_raw)
-                logger.info(f"CRS from metadata WKT: {crs}")
-                return crs
-            except Exception:
-                pass
-            # Or it might be an Autodesk code wrapped in LOCAL_CS
-            match = re.search(r'LOCAL_CS\["(.+?)"\]', cs_raw)
-            if match:
-                crs = resolve_crs_from_autodesk_code(match.group(1))
+            # Reject trivial LOCAL_CS that has no real coordinate system info
+            # (e.g., LOCAL_CS["."] or LOCAL_CS[""] from drawings with no CS assigned)
+            # These create GeoTIFF geokeys with invalid UTF-8 that crash WhiteboxTools
+            is_trivial_local = False
+            if 'LOCAL_CS' in cs_raw:
+                match = re.search(r'LOCAL_CS\["(.+?)"\]', cs_raw)
+                cs_name = match.group(1) if match else ""
+                if not cs_name or cs_name == "." or len(cs_name) <= 2:
+                    is_trivial_local = True
+                    logger.warning(f"Ignoring trivial LOCAL_CS (name='{cs_name}')")
+                else:
+                    # Might be an Autodesk code inside LOCAL_CS
+                    crs = resolve_crs_from_autodesk_code(cs_name)
+                    if crs:
+                        return crs
+
+            if not is_trivial_local:
+                # Try parsing as WKT
+                try:
+                    crs = CRS.from_wkt(cs_raw)
+                    logger.info(f"CRS from metadata WKT: {crs}")
+                    return crs
+                except Exception:
+                    pass
+                # Or just a raw code
+                crs = resolve_crs_from_autodesk_code(cs_raw)
                 if crs:
                     return crs
-            # Or just a raw code
-            crs = resolve_crs_from_autodesk_code(cs_raw)
-            if crs:
-                return crs
 
     # --- Tier 4: Local engineering CRS with correct units ---
     unit = drawing_units or "ft"

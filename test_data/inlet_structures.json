@@ -1,0 +1,155 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          140,
+          295
+        ]
+      },
+      "properties": {
+        "structure_id": "STR-1",
+        "name": "STR-1",
+        "rim_elevation": 103.4
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          290,
+          295
+        ]
+      },
+      "properties": {
+        "structure_id": "STR-2",
+        "name": "STR-2",
+        "rim_elevation": 102.9
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          440,
+          295
+        ]
+      },
+      "properties": {
+        "structure_id": "STR-3",
+        "name": "STR-3",
+        "rim_elevation": 102.3
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          590,
+          295
+        ]
+      },
+      "properties": {
+        "structure_id": "STR-4",
+        "name": "STR-4",
+        "rim_elevation": 101.6
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          140,
+          190
+        ]
+      },
+      "properties": {
+        "structure_id": "STR-5",
+        "name": "STR-5",
+        "rim_elevation": 101.9
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          290,
+          190
+        ]
+      },
+      "properties": {
+        "structure_id": "STR-6",
+        "name": "STR-6",
+        "rim_elevation": 101.4
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          440,
+          190
+        ]
+      },
+      "properties": {
+        "structure_id": "STR-7",
+        "name": "STR-7",
+        "rim_elevation": 100.8
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          590,
+          190
+        ]
+      },
+      "properties": {
+        "structure_id": "STR-8",
+        "name": "STR-8",
+        "rim_elevation": 100.2
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          400,
+          110
+        ]
+      },
+      "properties": {
+        "structure_id": "STR-9",
+        "name": "STR-9",
+        "rim_elevation": 99.5
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          540,
+          68
+        ]
+      },
+      "properties": {
+        "structure_id": "STR-10",
+        "name": "STR-10",
+        "rim_elevation": 97.3
+      }
+    }
+  ]
+}

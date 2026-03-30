@@ -119,6 +119,7 @@ class CatchmentDelineator:
             "drawing_units": "ft",         # Fix #10: drawing linear units
             "flow_accumulation_threshold": 100,
             "retain_intermediates": False,  # Fix #4: cleanup by default
+            "simplify_tolerance": 1.0,     # Douglas-Peucker tolerance in map units
         }
 
         if config_file and Path(config_file).exists():
@@ -448,9 +449,12 @@ class CatchmentDelineator:
         min_area = self.config["_resolved_min_area"]
 
         # Extract all polygons from raster
+        tolerance = self.config.get("simplify_tolerance", 1.0)
         polygons = []
         for geom, value in shapes(data.astype(np.int32), mask=mask, transform=transform):
             polygon = shape(geom)
+            if tolerance and tolerance > 0:
+                polygon = polygon.simplify(tolerance, preserve_topology=True)
             area = polygon.area
             if area >= min_area:
                 polygons.append({
@@ -525,13 +529,7 @@ class CatchmentDelineator:
 
         if results:
             gdf = gpd.GeoDataFrame(results, crs=crs)
-
-            simplify_tol = self.config.get("simplify_tolerance", 1.0)
-            if simplify_tol > 0:
-                logger.info(f"Simplifying polygons (tolerance={simplify_tol})...")
-                gdf['geometry'] = gdf['geometry'].simplify(
-                    tolerance=simplify_tol, preserve_topology=True
-                )
+            gdf['area'] = gdf.geometry.area
 
             gdf.to_file(output_path)
             gdf.to_file(geojson_path, driver='GeoJSON')
@@ -611,8 +609,8 @@ def main():
     parser.add_argument('--min-area', type=float, default=0.5,
                         help='Minimum catchment area (default: 0.5)')
     parser.add_argument('--area-unit', choices=['acres', 'hectares', 'sq_ft', 'sq_m'],
-                        default='acres',
-                        help='Unit for --min-area (default: acres)')
+                        default='sq_ft',
+                        help='Unit for --min-area (default: sq_ft)')
     parser.add_argument('--simplify-tolerance', type=float, default=1.0,
                         help='Polygon simplification tolerance, 0=none (default: 1)')
     parser.add_argument('--burn-pipes',
@@ -640,8 +638,10 @@ def main():
     }
 
     # Run with managed workspace (Fix #4)
+    # When C# provides --working-dir, always retain (C# manages cleanup)
+    retain = args.retain_intermediates or (args.working_dir is not None)
     with gis_workspace(
-        retain=args.retain_intermediates,
+        retain=retain,
         workspace_dir=Path(args.working_dir) if args.working_dir else None,
     ) as ws:
         delineator = CatchmentDelineator(

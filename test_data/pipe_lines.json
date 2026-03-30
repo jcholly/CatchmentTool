@@ -1,0 +1,176 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            140,
+            295
+          ],
+          [
+            290,
+            295
+          ]
+        ]
+      },
+      "properties": {
+        "name": "P-01"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            290,
+            295
+          ],
+          [
+            440,
+            295
+          ]
+        ]
+      },
+      "properties": {
+        "name": "P-02"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            440,
+            295
+          ],
+          [
+            590,
+            295
+          ]
+        ]
+      },
+      "properties": {
+        "name": "P-03"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            590,
+            295
+          ],
+          [
+            590,
+            190
+          ]
+        ]
+      },
+      "properties": {
+        "name": "P-04"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            140,
+            190
+          ],
+          [
+            290,
+            190
+          ]
+        ]
+      },
+      "properties": {
+        "name": "P-05"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            290,
+            190
+          ],
+          [
+            440,
+            190
+          ]
+        ]
+      },
+      "properties": {
+        "name": "P-06"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            440,
+            190
+          ],
+          [
+            590,
+            190
+          ]
+        ]
+      },
+      "properties": {
+        "name": "P-07"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            590,
+            190
+          ],
+          [
+            400,
+            110
+          ]
+        ]
+      },
+      "properties": {
+        "name": "P-08"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            400,
+            110
+          ],
+          [
+            540,
+            68
+          ]
+        ]
+      },
+      "properties": {
+        "name": "P-09"
+      }
+    }
+  ]
+}

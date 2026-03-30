@@ -1027,6 +1027,660 @@ namespace CatchmentTool.Commands
         }
         
         #endregion
+
+        #region TR-55 Time of Concentration
+
+        /// <summary>
+        /// Calculate TR-55 Time of Concentration for existing catchments.
+        /// Uses WhiteboxTools for flow path extraction and TR-55 segmented method.
+        /// Writes Tc back to each Catchment object's TimeOfConcentration property.
+        /// </summary>
+        [CommandMethod("CALCULATETC")]
+        public void CalculateTimeOfConcentration()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            var stopwatch = Stopwatch.StartNew();
+
+            try
+            {
+                ed.WriteMessage("\n");
+                ed.WriteMessage("╔══════════════════════════════════════════════════════════════╗\n");
+                ed.WriteMessage("║       TR-55 TIME OF CONCENTRATION CALCULATOR                ║\n");
+                ed.WriteMessage("║       Computes Tc for existing catchments via DEM analysis   ║\n");
+                ed.WriteMessage("╚══════════════════════════════════════════════════════════════╝\n\n");
+
+                // ═══════════════════════════════════════════════════════════════
+                // STEP 1: Select inputs
+                // ═══════════════════════════════════════════════════════════════
+                ed.WriteMessage("┌─────────────────────────────────────────────────────────────┐\n");
+                ed.WriteMessage("│ STEP 1/4: SELECT INPUTS                                     │\n");
+                ed.WriteMessage("└─────────────────────────────────────────────────────────────┘\n");
+
+                // Select surface
+                ed.WriteMessage("\n  [1.1] Selecting surface for DEM export...\n");
+                ObjectId surfaceId = SelectSurface(ed, db);
+                if (surfaceId.IsNull)
+                {
+                    ed.WriteMessage("  ✗ No surface selected. Aborting.\n");
+                    return;
+                }
+
+                string surfaceName = "";
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var surface = tr.GetObject(surfaceId, OpenMode.ForRead) as CivilSurface;
+                    surfaceName = surface?.Name ?? "Unknown";
+                    tr.Commit();
+                }
+                ed.WriteMessage($"  ✓ Surface: {surfaceName}\n");
+
+                // Find catchments in the drawing
+                ed.WriteMessage("\n  [1.2] Scanning for catchment objects...\n");
+                var catchmentIds = FindCatchmentIds(db);
+                if (catchmentIds.Count == 0)
+                {
+                    ed.WriteMessage("  ✗ No catchment objects found in this drawing.\n");
+                    ed.WriteMessage("    Run AUTOCATCHMENTS first to create catchments.\n");
+                    return;
+                }
+                ed.WriteMessage($"  ✓ Found {catchmentIds.Count} catchments\n");
+
+                // Get P2 rainfall via map dialog (NOAA Atlas 14)
+                ed.WriteMessage("\n  [1.3] Opening rainfall map...\n");
+                double p2Rainfall = 3.5; // fallback default
+                try
+                {
+                    var mapDialog = new RainfallMapDialog();
+                    var dialogResult = Autodesk.AutoCAD.ApplicationServices.Application
+                        .ShowModalWindow(mapDialog);
+
+                    if (dialogResult == true && mapDialog.P2RainfallInches > 0)
+                    {
+                        p2Rainfall = mapDialog.P2RainfallInches;
+                        ed.WriteMessage($"  ✓ P₂ rainfall: {p2Rainfall:F2} inches (NOAA Atlas 14)\n");
+
+                        if (!double.IsNaN(mapDialog.SelectedLatitude))
+                        {
+                            ed.WriteMessage($"    Location: {mapDialog.SelectedLatitude:F4}, {mapDialog.SelectedLongitude:F4}\n");
+                        }
+                    }
+                    else
+                    {
+                        ed.WriteMessage($"  ✓ P₂ rainfall: {p2Rainfall:F2} inches (default)\n");
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage($"  ! Map dialog unavailable ({ex.Message}), using default P₂.\n");
+
+                    // Fall back to manual prompt
+                    var p2Opts = new PromptDoubleOptions("\n  Enter 2-year, 24-hour rainfall depth (inches) [3.5]: ");
+                    p2Opts.DefaultValue = 3.5;
+                    p2Opts.AllowNone = true;
+                    var p2PromptResult = ed.GetDouble(p2Opts);
+                    if (p2PromptResult.Status == PromptStatus.OK)
+                        p2Rainfall = p2PromptResult.Value;
+                    ed.WriteMessage($"  ✓ P₂ rainfall: {p2Rainfall:F2} inches\n");
+                }
+
+                // Prompt for Manning's n (sheet flow)
+                var nSheetOpts = new PromptDoubleOptions("\n  Enter Manning's n for sheet flow [0.15]: ");
+                nSheetOpts.DefaultValue = 0.15;
+                nSheetOpts.AllowNone = true;
+                var nSheetResult = ed.GetDouble(nSheetOpts);
+                double nSheet = nSheetResult.Status == PromptStatus.OK ? nSheetResult.Value : 0.15;
+                ed.WriteMessage($"  ✓ Manning's n (sheet): {nSheet:F3}\n");
+
+                // ═══════════════════════════════════════════════════════════════
+                // STEP 2: Export DEM and catchment boundaries
+                // ═══════════════════════════════════════════════════════════════
+                ed.WriteMessage("\n┌─────────────────────────────────────────────────────────────┐\n");
+                ed.WriteMessage("│ STEP 2/4: EXPORT SURFACE AND CATCHMENT BOUNDARIES           │\n");
+                ed.WriteMessage("└─────────────────────────────────────────────────────────────┘\n");
+
+                string tempDir = Path.Combine(Path.GetTempPath(),
+                    "CatchmentTool_Tc_" + Guid.NewGuid().ToString("N").Substring(0, 8));
+                Directory.CreateDirectory(tempDir);
+                ed.WriteMessage($"\n  [2.1] Working directory: {tempDir}\n");
+
+                // Export surface to DEM
+                ed.WriteMessage("\n  [2.2] Exporting surface to DEM raster...\n");
+                var surfaceExporter = new SurfaceExporter(doc);
+                surfaceExporter.ProgressCallback = (msg) => ed.WriteMessage($"        {msg}\n");
+
+                string demPath = Path.Combine(tempDir, "surface_dem");
+                var surfaceResult = surfaceExporter.Export(surfaceId, demPath);
+
+                if (!surfaceResult.Success)
+                {
+                    ed.WriteMessage("  ✗ Failed to export surface. Aborting.\n");
+                    return;
+                }
+                ed.WriteMessage($"  ✓ DEM exported: {surfaceResult.Columns} x {surfaceResult.Rows} cells\n");
+
+                // Export catchment boundaries to GeoJSON
+                ed.WriteMessage("\n  [2.3] Exporting catchment boundaries...\n");
+                string catchmentsPath = Path.Combine(tempDir, "catchments_for_tc.json");
+                ExportCatchmentBoundaries(catchmentIds, db, catchmentsPath);
+                ed.WriteMessage($"  ✓ Exported {catchmentIds.Count} catchment boundaries\n");
+
+                // ═══════════════════════════════════════════════════════════════
+                // STEP 3: Run Python Tc calculation
+                // ═══════════════════════════════════════════════════════════════
+                ed.WriteMessage("\n┌─────────────────────────────────────────────────────────────┐\n");
+                ed.WriteMessage("│ STEP 3/4: COMPUTE TR-55 Tc (WhiteboxTools + Python)          │\n");
+                ed.WriteMessage("└─────────────────────────────────────────────────────────────┘\n");
+
+                ed.WriteMessage("\n  [3.1] Starting TR-55 Tc calculation...\n");
+                ed.WriteMessage("        - DEM conditioning (breach depressions)\n");
+                ed.WriteMessage("        - D8 flow direction + accumulation\n");
+                ed.WriteMessage("        - Longest flow path extraction per catchment\n");
+                ed.WriteMessage("        - Flow path segmentation + TR-55 equations\n\n");
+
+                // Detect drawing units
+                var drawingUnits = DrawingUnits.Detect(doc);
+
+                string tcOutputPath = Path.Combine(tempDir, "tc_results.json");
+                string tcPythonResult = RunPythonTcCalculation(
+                    surfaceResult.OutputPath, catchmentsPath, tcOutputPath,
+                    tempDir, p2Rainfall, nSheet, drawingUnits.UnitLabel, ed);
+
+                if (!File.Exists(tcOutputPath))
+                {
+                    ed.WriteMessage($"  ✗ Tc calculation failed. Python output:\n{tcPythonResult}\n");
+                    return;
+                }
+                ed.WriteMessage($"  ✓ Tc calculation complete\n");
+
+                // ═══════════════════════════════════════════════════════════════
+                // STEP 4: Write Tc values to catchment objects
+                // ═══════════════════════════════════════════════════════════════
+                ed.WriteMessage("\n┌─────────────────────────────────────────────────────────────┐\n");
+                ed.WriteMessage("│ STEP 4/4: UPDATE CATCHMENT Tc VALUES                        │\n");
+                ed.WriteMessage("└─────────────────────────────────────────────────────────────┘\n");
+
+                string tcJson = File.ReadAllText(tcOutputPath);
+                var tcResults = Newtonsoft.Json.JsonConvert.DeserializeObject<
+                    List<Dictionary<string, object>>>(tcJson);
+
+                int updated = 0;
+                int failed = 0;
+
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    foreach (var tcResult in tcResults)
+                    {
+                        string catchmentId = tcResult.ContainsKey("catchmentId")
+                            ? tcResult["catchmentId"].ToString() : "";
+                        double tcMinutes = tcResult.ContainsKey("tcMinutes")
+                            ? Convert.ToDouble(tcResult["tcMinutes"]) : -1;
+
+                        if (tcMinutes < 0)
+                        {
+                            string err = tcResult.ContainsKey("error") ? tcResult["error"].ToString() : "unknown";
+                            ed.WriteMessage($"\n  ✗ {catchmentId}: {err}");
+                            failed++;
+                            continue;
+                        }
+
+                        // Find the matching catchment object
+                        ObjectId matchedId = FindCatchmentByName(catchmentIds, catchmentId, db, tr);
+                        if (matchedId.IsNull)
+                        {
+                            ed.WriteMessage($"\n  ? {catchmentId}: Tc = {tcMinutes:F1} min (no matching catchment object)");
+                            failed++;
+                            continue;
+                        }
+
+                        // Write Tc to the catchment
+                        if (SetCatchmentTc(matchedId, tcMinutes, tr, ed))
+                        {
+                            ed.WriteMessage($"\n  ✓ {catchmentId}: Tc = {tcMinutes:F1} min");
+                            updated++;
+                        }
+                        else
+                        {
+                            ed.WriteMessage($"\n  ✗ {catchmentId}: Tc = {tcMinutes:F1} min (failed to write)");
+                            failed++;
+                        }
+                    }
+
+                    tr.Commit();
+                }
+
+                // ═══════════════════════════════════════════════════════════════
+                // COMPLETE
+                // ═══════════════════════════════════════════════════════════════
+                stopwatch.Stop();
+
+                ed.WriteMessage("\n\n╔══════════════════════════════════════════════════════════════╗\n");
+                ed.WriteMessage("║                 TC CALCULATION COMPLETE!                     ║\n");
+                ed.WriteMessage("╚══════════════════════════════════════════════════════════════╝\n\n");
+                ed.WriteMessage($"  Summary:\n");
+                ed.WriteMessage($"    • Surface analyzed: {surfaceName}\n");
+                ed.WriteMessage($"    • Catchments processed: {tcResults.Count}\n");
+                ed.WriteMessage($"    • Tc values updated: {updated}\n");
+                if (failed > 0)
+                    ed.WriteMessage($"    • Failed: {failed}\n");
+                ed.WriteMessage($"    • P₂ rainfall used: {p2Rainfall:F2} inches\n");
+                ed.WriteMessage($"    • Processing time: {stopwatch.Elapsed.TotalSeconds:F1} seconds\n");
+                ed.WriteMessage($"\n  Detailed results: {tcOutputPath}\n");
+                ed.WriteMessage($"  Working directory: {tempDir}\n\n");
+            }
+            catch (System.Exception ex)
+            {
+                stopwatch.Stop();
+                ed.WriteMessage($"\n  ✗ ERROR: {ex.Message}\n");
+                ed.WriteMessage($"  Stack trace: {ex.StackTrace}\n");
+            }
+        }
+
+        /// <summary>
+        /// Find all Catchment object IDs in the drawing.
+        /// </summary>
+        private List<ObjectId> FindCatchmentIds(Database db)
+        {
+            var ids = new List<ObjectId>();
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var bt = tr.GetObject(db.BlockTableId, OpenMode.ForRead) as BlockTable;
+                var ms = tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead) as BlockTableRecord;
+
+                foreach (ObjectId objId in ms)
+                {
+                    try
+                    {
+                        var catchment = tr.GetObject(objId, OpenMode.ForRead) as Catchment;
+                        if (catchment != null)
+                            ids.Add(objId);
+                    }
+                    catch { }
+                }
+
+                tr.Commit();
+            }
+
+            return ids;
+        }
+
+        /// <summary>
+        /// Export catchment boundaries to a GeoJSON file for the Python Tc script.
+        /// Each feature includes the catchment name as its ID.
+        /// </summary>
+        private void ExportCatchmentBoundaries(List<ObjectId> catchmentIds, Database db, string outputPath)
+        {
+            var features = new List<object>();
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                foreach (var objId in catchmentIds)
+                {
+                    try
+                    {
+                        var catchment = tr.GetObject(objId, OpenMode.ForRead) as Catchment;
+                        if (catchment == null) continue;
+
+                        // Extract boundary vertices using reflection (version-safe)
+                        var coords = ExtractCatchmentBoundaryCoords(catchment, tr);
+                        if (coords == null || coords.Count < 3) continue;
+
+                        // Close the ring if needed
+                        var first = coords[0];
+                        var last = coords[coords.Count - 1];
+                        if (Math.Abs(first[0] - last[0]) > 0.001 || Math.Abs(first[1] - last[1]) > 0.001)
+                            coords.Add(new double[] { first[0], first[1] });
+
+                        var feature = new
+                        {
+                            type = "Feature",
+                            properties = new
+                            {
+                                catchment_id = catchment.Name ?? $"catchment_{objId.Handle}",
+                                name = catchment.Name ?? "",
+                            },
+                            geometry = new
+                            {
+                                type = "Polygon",
+                                coordinates = new[] { coords }
+                            }
+                        };
+
+                        features.Add(feature);
+                    }
+                    catch { }
+                }
+
+                tr.Commit();
+            }
+
+            var geojson = new
+            {
+                type = "FeatureCollection",
+                features = features
+            };
+
+            string json = Newtonsoft.Json.JsonConvert.SerializeObject(geojson, Newtonsoft.Json.Formatting.Indented);
+            File.WriteAllText(outputPath, json);
+        }
+
+        /// <summary>
+        /// Extract catchment boundary coordinates using reflection (version-safe).
+        /// Tries multiple API paths: BoundaryPolylineId, Vertices, GeometricExtents.
+        /// </summary>
+        private List<double[]> ExtractCatchmentBoundaryCoords(Catchment catchment, Transaction tr)
+        {
+            var catchmentType = catchment.GetType();
+
+            // Try 1: BoundaryPolylineId -> read the polyline
+            try
+            {
+                var boundaryProp = catchmentType.GetProperty("BoundaryPolylineId");
+                if (boundaryProp != null)
+                {
+                    var polyId = (ObjectId)boundaryProp.GetValue(catchment);
+                    if (!polyId.IsNull)
+                    {
+                        var polyline = tr.GetObject(polyId, OpenMode.ForRead) as Polyline;
+                        if (polyline != null)
+                        {
+                            var coords = new List<double[]>();
+                            for (int i = 0; i < polyline.NumberOfVertices; i++)
+                            {
+                                var pt = polyline.GetPoint2dAt(i);
+                                coords.Add(new double[] { pt.X, pt.Y });
+                            }
+                            if (coords.Count >= 3) return coords;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // Try 2: Vertices property
+            try
+            {
+                var verticesProp = catchmentType.GetProperty("Vertices");
+                if (verticesProp != null)
+                {
+                    var vertices = verticesProp.GetValue(catchment);
+                    if (vertices is Point2dCollection pts)
+                    {
+                        var coords = new List<double[]>();
+                        foreach (Point2d pt in pts)
+                            coords.Add(new double[] { pt.X, pt.Y });
+                        if (coords.Count >= 3) return coords;
+                    }
+                    else if (vertices is Point3dCollection pts3d)
+                    {
+                        var coords = new List<double[]>();
+                        foreach (Point3d pt in pts3d)
+                            coords.Add(new double[] { pt.X, pt.Y });
+                        if (coords.Count >= 3) return coords;
+                    }
+                }
+            }
+            catch { }
+
+            // Try 3: Treat as a curve
+            try
+            {
+                if (catchment is Curve curve)
+                {
+                    var coords = new List<double[]>();
+                    double startParam = curve.StartParam;
+                    double endParam = curve.EndParam;
+                    int steps = Math.Max(20, (int)(endParam - startParam));
+
+                    for (int i = 0; i <= steps; i++)
+                    {
+                        double param = startParam + (endParam - startParam) * i / steps;
+                        Point3d pt = curve.GetPointAtParameter(param);
+                        coords.Add(new double[] { pt.X, pt.Y });
+                    }
+                    if (coords.Count >= 3) return coords;
+                }
+            }
+            catch { }
+
+            // Try 4: GeometricExtents (bounding box fallback)
+            try
+            {
+                var extents = catchment.GeometricExtents;
+                return new List<double[]>
+                {
+                    new double[] { extents.MinPoint.X, extents.MinPoint.Y },
+                    new double[] { extents.MaxPoint.X, extents.MinPoint.Y },
+                    new double[] { extents.MaxPoint.X, extents.MaxPoint.Y },
+                    new double[] { extents.MinPoint.X, extents.MaxPoint.Y },
+                    new double[] { extents.MinPoint.X, extents.MinPoint.Y },
+                };
+            }
+            catch { }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Run the Python TR-55 Tc calculation script.
+        /// </summary>
+        private string RunPythonTcCalculation(string demPath, string catchmentsPath,
+                                              string outputPath, string workingDir,
+                                              double p2Rainfall, double nSheet,
+                                              string drawingUnits, Editor ed)
+        {
+            var pyEnv = new PythonEnvironment();
+            pyEnv.StatusCallback = (msg) => ed.WriteMessage($"        {msg}\n");
+
+            if (!pyEnv.Discover())
+            {
+                if (pyEnv.PythonPath == null)
+                {
+                    ed.WriteMessage("  ✗ Python 3 not found.\n");
+                    ed.WriteMessage("    Install Python 3.10+ from https://www.python.org/downloads/\n");
+                }
+                else
+                {
+                    ed.WriteMessage("  ✗ Python scripts not found. Reinstall the CatchmentTool bundle.\n");
+                }
+                return "Python environment not available";
+            }
+
+            ed.WriteMessage($"  [3.1] {pyEnv.PythonVersion}\n");
+
+            // Check packages
+            var missing = pyEnv.CheckMissingPackages();
+            if (missing.Count > 0)
+            {
+                ed.WriteMessage($"  [3.2] Installing: {string.Join(", ", missing)}...\n");
+                if (!pyEnv.InstallPackages(missing))
+                {
+                    return "Package installation failed";
+                }
+            }
+
+            // Find the run_tc.py script (same directory as catchment_delineation.py)
+            string scriptDir = Path.GetDirectoryName(pyEnv.ScriptPath) ?? "";
+            string tcScript = Path.Combine(scriptDir, "run_tc.py");
+
+            if (!File.Exists(tcScript))
+            {
+                ed.WriteMessage($"  ✗ run_tc.py not found at: {tcScript}\n");
+                return "run_tc.py not found";
+            }
+
+            // Build arguments
+            string arguments = $"--dem \"{demPath}\" " +
+                              $"--catchments \"{catchmentsPath}\" " +
+                              $"--output \"{outputPath}\" " +
+                              $"--working-dir \"{workingDir}\" " +
+                              $"--drawing-units {drawingUnits} " +
+                              $"--p2-rainfall {p2Rainfall:F2} " +
+                              $"--mannings-n-sheet {nSheet:F3}";
+
+            // Build ProcessStartInfo manually for run_tc.py
+            string fullArgs = pyEnv.PythonPath == "py"
+                ? $"-3 \"{tcScript}\" {arguments}"
+                : $"\"{tcScript}\" {arguments}";
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = pyEnv.PythonPath,
+                Arguments = fullArgs,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                WorkingDirectory = scriptDir
+            };
+
+            var output = new StringBuilder();
+            var error = new StringBuilder();
+
+            try
+            {
+                using (var process = new Process { StartInfo = startInfo })
+                {
+                    process.OutputDataReceived += (s, e) =>
+                    {
+                        if (!string.IsNullOrEmpty(e.Data))
+                        {
+                            output.AppendLine(e.Data);
+                            if (e.Data.Contains("Step") || e.Data.Contains("COMPLETE") ||
+                                e.Data.Contains("Tc =") || e.Data.Contains("ERROR") ||
+                                e.Data.Contains("catchment"))
+                            {
+                                ed.WriteMessage($"        {e.Data}\n");
+                            }
+                        }
+                    };
+                    process.ErrorDataReceived += (s, e) =>
+                    {
+                        if (!string.IsNullOrEmpty(e.Data))
+                            error.AppendLine(e.Data);
+                    };
+
+                    process.Start();
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+
+                    bool completed = process.WaitForExit(600000); // 10 min timeout for Tc
+
+                    if (!completed)
+                    {
+                        process.Kill();
+                        return "Python script timed out after 10 minutes";
+                    }
+
+                    if (process.ExitCode != 0)
+                    {
+                        return $"Python exited with code {process.ExitCode}: {error}";
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                return $"Failed to run Python: {ex.Message}";
+            }
+
+            return output.ToString();
+        }
+
+        /// <summary>
+        /// Find a catchment ObjectId by name match.
+        /// </summary>
+        private ObjectId FindCatchmentByName(List<ObjectId> catchmentIds, string name,
+                                             Database db, Transaction tr)
+        {
+            foreach (var objId in catchmentIds)
+            {
+                try
+                {
+                    var catchment = tr.GetObject(objId, OpenMode.ForRead) as Catchment;
+                    if (catchment != null &&
+                        string.Equals(catchment.Name, name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return objId;
+                    }
+                }
+                catch { }
+            }
+
+            // Try partial match (catchment name might be "CA-xxx" while result uses "xxx")
+            foreach (var objId in catchmentIds)
+            {
+                try
+                {
+                    var catchment = tr.GetObject(objId, OpenMode.ForRead) as Catchment;
+                    if (catchment != null)
+                    {
+                        string cName = catchment.Name ?? "";
+                        // Check if catchment name ends with the result name
+                        if (cName.EndsWith(name, StringComparison.OrdinalIgnoreCase) ||
+                            name.EndsWith(cName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return objId;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            return ObjectId.Null;
+        }
+
+        /// <summary>
+        /// Set the TimeOfConcentration property on a Catchment object.
+        /// Uses reflection for version-safe access.
+        /// </summary>
+        private bool SetCatchmentTc(ObjectId catchmentId, double tcMinutes,
+                                    Transaction tr, Editor ed)
+        {
+            try
+            {
+                var catchment = tr.GetObject(catchmentId, OpenMode.ForWrite) as Catchment;
+                if (catchment == null) return false;
+
+                var catchmentType = catchment.GetType();
+
+                // Try TimeOfConcentration property (minutes)
+                var tcProp = catchmentType.GetProperty("TimeOfConcentration");
+                if (tcProp != null && tcProp.CanWrite)
+                {
+                    tcProp.SetValue(catchment, tcMinutes);
+                    return true;
+                }
+
+                // Try Tc property
+                tcProp = catchmentType.GetProperty("Tc");
+                if (tcProp != null && tcProp.CanWrite)
+                {
+                    tcProp.SetValue(catchment, tcMinutes);
+                    return true;
+                }
+
+                // Try setting via method
+                var setMethod = catchmentType.GetMethod("SetTimeOfConcentration");
+                if (setMethod != null)
+                {
+                    setMethod.Invoke(catchment, new object[] { tcMinutes });
+                    return true;
+                }
+
+                ed.WriteMessage($"\n    (TimeOfConcentration property not found via reflection)");
+                return false;
+            }
+            catch (System.Exception ex)
+            {
+                ed.WriteMessage($"\n    Error setting Tc: {ex.Message}");
+                return false;
+            }
+        }
+
+        #endregion
     }
 }
 

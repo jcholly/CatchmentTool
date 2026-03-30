@@ -1,0 +1,13 @@
+{
+  "surface_name": "Proposed Grade",
+  "cell_size": 2.0,
+  "rows": 251,
+  "cols": 351,
+  "origin_x": 1.0,
+  "origin_y": 499.0,
+  "no_data": -9999,
+  "drawing_units": "ft",
+  "is_metric": false,
+  "coordinate_system": "",
+  "autodesk_cs_code": ""
+}

@@ -83,11 +83,35 @@ if (Test-Path $jsonDll) {
     Write-Host "      [OK] Newtonsoft.Json.dll" -ForegroundColor Gray
 }
 
+# Copy WebView2 assemblies
+$webView2Dlls = @(
+    "Microsoft.Web.WebView2.Core.dll",
+    "Microsoft.Web.WebView2.Wpf.dll"
+)
+foreach ($dll in $webView2Dlls) {
+    $dllPath = Join-Path $BinDir $dll
+    if (Test-Path $dllPath) {
+        Copy-Item $dllPath -Destination $ContentsDir -Force
+        Write-Host "      [OK] $dll" -ForegroundColor Gray
+    }
+}
+# Copy WebView2Loader native DLL
+$loaderDir = Join-Path $BinDir "runtimes" "win-x64" "native"
+$loaderDll = Join-Path $loaderDir "WebView2Loader.dll"
+if (Test-Path $loaderDll) {
+    Copy-Item $loaderDll -Destination $ContentsDir -Force
+    Write-Host "      [OK] WebView2Loader.dll (native)" -ForegroundColor Gray
+}
+
 # Copy all Python files
 $pythonFiles = @(
     "catchment_delineation.py",
     "dem_utils.py",
     "run_delineation.py",
+    "crs_utils.py",
+    "validation.py",
+    "tc_calculator.py",
+    "run_tc.py",
     "requirements.txt",
     "config_template.json"
 )

@@ -35,3 +35,8 @@ Thumbs.db
 *.mp4
 *.avi
 *.mov
+
+# Generated test data (too large / binary / regeneratable)
+test_data/*.xml
+test_data/*.bil
+test_data/*.dxf
