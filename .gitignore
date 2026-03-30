@@ -11,8 +11,7 @@ CSharp/.vs/
 # Distribution artifacts
 Distribution/*.zip
 Distribution/TestExtract/
-Distribution/CatchmentTool.bundle/Contents/CatchmentTool.dll
-Distribution/CatchmentTool.bundle/Contents/Newtonsoft.Json.dll
+Distribution/CatchmentTool.bundle/Contents/*.dll
 
 # Python
 __pycache__/
@@ -20,6 +19,7 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+.pytest_cache/
 
 # Data folder contents (keep .gitkeep)
 Data/*
@@ -36,7 +36,8 @@ Thumbs.db
 *.avi
 *.mov
 
-# Generated test data (too large / binary / regeneratable)
+# Generated test data (binary / regeneratable via generate_test_site.py)
 test_data/*.xml
 test_data/*.bil
+test_data/*.hdr
 test_data/*.dxf
