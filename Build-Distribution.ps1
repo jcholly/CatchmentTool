@@ -96,7 +96,7 @@ foreach ($dll in $webView2Dlls) {
     }
 }
 # Copy WebView2Loader native DLL
-$loaderDir = Join-Path $BinDir "runtimes" "win-x64" "native"
+$loaderDir = Join-Path (Join-Path (Join-Path $BinDir "runtimes") "win-x64") "native"
 $loaderDll = Join-Path $loaderDir "WebView2Loader.dll"
 if (Test-Path $loaderDll) {
     Copy-Item $loaderDll -Destination $ContentsDir -Force

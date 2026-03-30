@@ -4,84 +4,72 @@ Automated catchment delineation using WhiteboxTools integrated with AutoCAD Civi
 
 ## Overview
 
-This tool automates the watershed delineation workflow for Civil 3D storm drainage design:
-
-1. Exports a Civil 3D TIN surface to a high-resolution DEM raster
-2. Extracts pipe network inlet structure locations as pour points
-3. Runs hydrologically-correct catchment delineation via WhiteboxTools (breach depressions, D8 flow direction, flow accumulation, watershed delineation)
-4. Creates Civil 3D Catchment objects linked to their corresponding inlet structures
-
-## Commands
+Two commands cover the full storm drainage catchment workflow:
 
 | Command | Description |
 |---------|-------------|
-| `AUTOCATCHMENTS` | **One-step** automated delineation (export, process, import) |
-| `CATCHMENTAUTO` | Open the automated catchment delineation dialog (WPF UI) |
-| `CATCHMENTEXPORT` / `CATCHMENTTOOL` | Export dialog for surface and inlet data |
-| `CATCHMENTIMPORT` | Import dialog for catchment polygons |
-| `EXPORTCATCHMENTDATA` | CLI-style export of surface DEM and inlet structures |
-| `IMPORTCATCHMENTS` | CLI-style import of catchment polygons |
-| `LINKCATCHMENTS` | Link existing catchments to outlet structures by naming convention |
-| `LISTPIPESTRUCTURES` | List all structures in a pipe network |
+| `CATCHMENTAUTO` | **Automated delineation** — exports TIN surface + inlet structures, runs WhiteboxTools hydrological analysis, and imports Civil 3D Catchment objects linked to their outlet structures |
+| `MAKECATCHMENTS` | **Linework to Catchments** — select closed polylines already in the drawing; assigns the pipe network structure found inside each polygon as the outlet and creates Civil 3D Catchment objects |
+
+## Typical Workflows
+
+### Workflow A — Automated (no existing linework)
+1. Type `CATCHMENTAUTO`
+2. Select surface and pipe network in the dialog
+3. Click **Run** — delineation runs automatically via WhiteboxTools
+4. Civil 3D Catchment objects are created, each linked to its inlet structure
+
+### Workflow B — From existing linework
+1. Draw or import closed polylines representing your catchment boundaries
+2. Type `MAKECATCHMENTS`
+3. Select the polylines, then select the reference surface
+4. The tool finds the pipe network structure inside each polygon and creates Civil 3D Catchment objects with outlets assigned
 
 ## Project Structure
 
 ```
 CatchmentTool/
 ├── CSharp/                          # Civil 3D .NET Plugin
-│   ├── CatchmentTool.csproj
-│   ├── CatchmentTool.sln
 │   ├── Commands/
-│   │   └── CatchmentCommands.cs     # All command definitions
+│   │   └── CatchmentCommands.cs     # CATCHMENTAUTO + MAKECATCHMENTS
 │   ├── Services/
 │   │   ├── SurfaceExporter.cs       # TIN surface → DEM raster
 │   │   ├── StructureExtractor.cs    # Pipe network → inlet points
-│   │   └── CatchmentCreator.cs      # Polygons → Civil 3D Catchments
+│   │   ├── CatchmentCreator.cs      # Polygons → Civil 3D Catchments
+│   │   └── PythonEnvironment.cs     # Python discovery + execution
 │   └── UI/
-│       ├── AutoCatchmentDialog.xaml  # One-click delineation dialog
-│       ├── CatchmentDialog.xaml
-│       ├── ExportDialog.xaml
-│       └── ImportDialog.xaml
+│       └── AutoCatchmentDialog.xaml # CATCHMENTAUTO dialog
 ├── Python/                          # WhiteboxTools processing
 │   ├── catchment_delineation.py     # Main delineation pipeline
-│   ├── dem_utils.py                 # DEM conversion utilities
-│   ├── run_delineation.py           # CLI entry point
-│   ├── config_template.json
+│   ├── crs_utils.py                 # CRS resolution
+│   ├── validation.py                # Pour point validation
 │   └── requirements.txt
 ├── Distribution/                    # Packaging and installation
-│   ├── CatchmentTool.bundle/        # AutoCAD ApplicationPlugins bundle
-│   ├── Install-CatchmentTool.ps1
-│   ├── Install.bat / Uninstall.bat
-│   └── README.md
-├── Data/                            # Working directory for intermediate files
-├── Build-Distribution.ps1           # Build + package script
-└── INSTALL.md                       # Detailed installation guide
+│   └── CatchmentTool.bundle/        # AutoCAD ApplicationPlugins bundle
+├── Build-Distribution.ps1           # Build + install script
+└── INSTALL.md
 ```
 
 ## Requirements
 
-### Civil 3D
-- AutoCAD Civil 3D 2026
-- .NET 8.0 (included with Civil 3D 2026)
+**Civil 3D:** AutoCAD Civil 3D 2026, .NET 8.0
 
-### Python
-- Python 3.10+
-- whitebox, rasterio, geopandas, shapely, numpy
-
-## Quick Start
-
-```powershell
-# 1. Install Python dependencies
+**Python** (for `CATCHMENTAUTO` only): Python 3.10+
+```
 pip install -r Python/requirements.txt
-
-# 2. Build the C# plugin
-dotnet build CSharp/CatchmentTool.csproj -c Release
-
-# 3. In Civil 3D: NETLOAD → browse to CSharp/bin/CatchmentTool.dll
-# 4. In Civil 3D: type AUTOCATCHMENTS
 ```
 
-For detailed installation (including auto-load setup), see [INSTALL.md](INSTALL.md).
+## Installation
+
+```powershell
+# Build and install to ApplicationPlugins
+.\Build-Distribution.ps1 -Install
+
+# Python-only update (no Civil 3D restart needed)
+.\Build-Distribution.ps1 -Install -SkipBuild
+```
+
+See [INSTALL.md](INSTALL.md) for detailed setup.
 
 ## License
 

@@ -1158,8 +1158,72 @@ namespace CatchmentTool.Services
         }
         
         #endregion
+
+        /// <summary>
+        /// Create Civil 3D Catchment objects from pre-built polygon data.
+        /// Used by MAKECATCHMENTS — structure is already resolved via point-in-polygon.
+        /// </summary>
+        public CatchmentImportResult CreateCatchmentsFromPolylines(
+            List<CatchmentPolygonInfo> polygons, ObjectId surfaceId)
+        {
+            var result = new CatchmentImportResult();
+
+            ObjectId siteId = GetOrCreateSite("Catchment Site");
+            ObjectId groupId = GetOrCreateCatchmentGroup(siteId, "Delineated Catchments");
+            ObjectId styleId = GetCatchmentStyle();
+            ObjectId layerId;
+
+            using (var tr = _db.TransactionManager.StartTransaction())
+            {
+                layerId = GetOrCreateLayer("C-STORM-CATCHMENTS", 3);
+                tr.Commit();
+            }
+
+            using (var tr = _db.TransactionManager.StartTransaction())
+            {
+                int num = 1;
+                foreach (var polygon in polygons)
+                {
+                    try
+                    {
+                        string name = polygon.StructureName.Length > 0
+                            ? $"Catchment - {polygon.StructureName}"
+                            : $"Catchment {num}";
+
+                        ObjectId structId = !polygon.StructureObjectId.IsNull
+                            ? polygon.StructureObjectId
+                            : ObjectId.Null;
+
+                        ObjectId polyId = CreatePolylineFromPoints(polygon.BoundaryPoints, layerId, tr);
+                        if (polyId.IsNull) { result.Errors.Add($"Could not create boundary for {name}"); num++; continue; }
+
+                        ObjectId catchId = CreateCatchment(groupId, styleId, polyId, name, surfaceId, structId, polygon, tr);
+
+                        if (!catchId.IsNull)
+                        {
+                            result.CatchmentsCreated++;
+                            _ed.WriteMessage($"  [{num:D2}] Created '{name}'\n");
+                        }
+                        else
+                        {
+                            result.CatchmentsCreated++;
+                            _ed.WriteMessage($"  [{num:D2}] Created polyline boundary for '{name}'\n");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        result.Errors.Add($"Error on polygon {num}: {ex.Message}");
+                    }
+                    num++;
+                }
+                tr.Commit();
+            }
+
+            result.Success = result.CatchmentsCreated > 0;
+            return result;
+        }
     }
-    
+
     public class CatchmentPolygonInfo
     {
         public string StructureId { get; set; }
@@ -1168,6 +1232,8 @@ namespace CatchmentTool.Services
         public double StructureX { get; set; }
         public double StructureY { get; set; }
         public List<Point2d> BoundaryPoints { get; set; } = new List<Point2d>();
+        /// <summary>Directly resolved structure ObjectId (used by MAKECATCHMENTS; bypasses name lookup).</summary>
+        public ObjectId StructureObjectId { get; set; } = ObjectId.Null;
     }
     
     public class CatchmentImportResult
