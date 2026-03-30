@@ -119,7 +119,7 @@ class CatchmentDelineator:
             "drawing_units": "ft",         # Fix #10: drawing linear units
             "flow_accumulation_threshold": 100,
             "retain_intermediates": False,  # Fix #4: cleanup by default
-            "simplify_tolerance": None,     # Douglas-Peucker tolerance; None = auto (2x cell size)
+            "smooth_radius": None,          # Morphological smooth radius; None = auto (1.5x cell size)
         }
 
         if config_file and Path(config_file).exists():
@@ -448,14 +448,16 @@ class CatchmentDelineator:
 
         min_area = self.config["_resolved_min_area"]
 
-        # Extract all polygons from raster
+        # Extract all polygons from raster and smooth stairstep edges.
+        # Morphological buffer(r).buffer(-r) rounds 90° raster corners — Douglas-Peucker
+        # does NOT work here because staircase corners are large deviations and are kept.
         cell_size = getattr(self, 'cell_size', 1.0)
-        tolerance = self.config.get("simplify_tolerance") or (cell_size * 2)
+        smooth_r = self.config.get("smooth_radius") or (cell_size * 1.5)
         polygons = []
         for geom, value in shapes(data.astype(np.int32), mask=mask, transform=transform):
             polygon = shape(geom)
-            if tolerance and tolerance > 0:
-                polygon = polygon.simplify(tolerance, preserve_topology=True)
+            if smooth_r and smooth_r > 0:
+                polygon = polygon.buffer(smooth_r).buffer(-smooth_r)
             area = polygon.area
             if area >= min_area:
                 polygons.append({
@@ -612,8 +614,8 @@ def main():
     parser.add_argument('--area-unit', choices=['acres', 'hectares', 'sq_ft', 'sq_m'],
                         default='sq_ft',
                         help='Unit for --min-area (default: sq_ft)')
-    parser.add_argument('--simplify-tolerance', type=float, default=1.0,
-                        help='Polygon simplification tolerance, 0=none (default: 1)')
+    parser.add_argument('--smooth-radius', type=float, default=None,
+                        help='Morphological smooth radius in map units, 0=none (default: auto = 1.5x cell size)')
     parser.add_argument('--burn-pipes',
                         help='Path to pipe lines GeoJSON for burning into DEM')
     parser.add_argument('--burn-depth', type=float, default=3.0,
@@ -632,7 +634,7 @@ def main():
         "min_catchment_area": args.min_area,
         "area_unit": args.area_unit,
         "drawing_units": args.drawing_units,
-        "simplify_tolerance": args.simplify_tolerance,
+        "smooth_radius": args.smooth_radius,
         "burn_pipes": args.burn_pipes,
         "burn_depth": args.burn_depth,
         "retain_intermediates": args.retain_intermediates,

@@ -640,12 +640,15 @@ class CatchmentDelineator:
         if results:
             gdf = gpd.GeoDataFrame(results, crs=crs)
             
-            # Simplify geometries — default to 2x cell size to remove raster stairsteps
+            # Smooth raster stairstep edges using morphological open/close:
+            # buffer(r) rounds convex corners; buffer(-r) restores size but keeps rounded concave corners.
+            # Douglas-Peucker (simplify) does NOT work here — 90° staircase corners are
+            # large deviations and will be retained by D-P regardless of tolerance.
             cell_size = getattr(self, 'cell_size', 1.0)
-            simplify_tol = self.config.get("simplify_tolerance") or (cell_size * 2)
-            if simplify_tol > 0:
-                logger.info(f"Simplifying polygons (tolerance={simplify_tol}, cell_size={cell_size})...")
-                gdf['geometry'] = gdf['geometry'].simplify(tolerance=simplify_tol, preserve_topology=True)
+            smooth_r = self.config.get("smooth_radius") or (cell_size * 1.5)
+            if smooth_r > 0:
+                logger.info(f"Smoothing polygon edges (radius={smooth_r}, cell_size={cell_size})...")
+                gdf['geometry'] = gdf['geometry'].buffer(smooth_r).buffer(-smooth_r)
             
             # Save to shapefile
             gdf.to_file(output_path)
