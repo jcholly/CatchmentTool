@@ -167,6 +167,7 @@ class CatchmentDelineator:
             self.crs = src.crs
             self.transform = src.transform
             self.dem_shape = src.shape
+            self.cell_size = max(src.res)
             logger.info(f"DEM CRS: {self.crs}")
             logger.info(f"DEM Shape: {self.dem_shape}")
             logger.info(f"DEM Resolution: {src.res}")
@@ -639,10 +640,11 @@ class CatchmentDelineator:
         if results:
             gdf = gpd.GeoDataFrame(results, crs=crs)
             
-            # Simplify geometries to reduce file size (tolerance in map units)
-            simplify_tol = self.config.get("simplify_tolerance", 1.0)
+            # Simplify geometries — default to 2x cell size to remove raster stairsteps
+            cell_size = getattr(self, 'cell_size', 1.0)
+            simplify_tol = self.config.get("simplify_tolerance") or (cell_size * 2)
             if simplify_tol > 0:
-                logger.info(f"Simplifying polygons (tolerance={simplify_tol})...")
+                logger.info(f"Simplifying polygons (tolerance={simplify_tol}, cell_size={cell_size})...")
                 gdf['geometry'] = gdf['geometry'].simplify(tolerance=simplify_tol, preserve_topology=True)
             
             # Save to shapefile

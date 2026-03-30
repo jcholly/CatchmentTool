@@ -119,7 +119,7 @@ class CatchmentDelineator:
             "drawing_units": "ft",         # Fix #10: drawing linear units
             "flow_accumulation_threshold": 100,
             "retain_intermediates": False,  # Fix #4: cleanup by default
-            "simplify_tolerance": 1.0,     # Douglas-Peucker tolerance in map units
+            "simplify_tolerance": None,     # Douglas-Peucker tolerance; None = auto (2x cell size)
         }
 
         if config_file and Path(config_file).exists():
@@ -449,7 +449,8 @@ class CatchmentDelineator:
         min_area = self.config["_resolved_min_area"]
 
         # Extract all polygons from raster
-        tolerance = self.config.get("simplify_tolerance", 1.0)
+        cell_size = getattr(self, 'cell_size', 1.0)
+        tolerance = self.config.get("simplify_tolerance") or (cell_size * 2)
         polygons = []
         for geom, value in shapes(data.astype(np.int32), mask=mask, transform=transform):
             polygon = shape(geom)
