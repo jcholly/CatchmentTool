@@ -448,18 +448,21 @@ class CatchmentDelineator:
 
         min_area = self.config["_resolved_min_area"]
 
-        # Extract polygons from raster
+        # Extract ALL polygons from raster (keep small ones for merging later)
         cell_size = getattr(self, 'cell_size', 1.0)
         polygons = []
+        small_polygons = []
         for geom, value in shapes(data.astype(np.int32), mask=mask, transform=transform):
             polygon = shape(geom)
             area = polygon.area
+            entry = {'geometry': polygon, 'raster_id': int(value), 'area': area}
             if area >= min_area:
-                polygons.append({
-                    'geometry': polygon,
-                    'raster_id': int(value),
-                    'area': area,
-                })
+                polygons.append(entry)
+            else:
+                small_polygons.append(entry)
+
+        if small_polygons:
+            logger.info(f"{len(small_polygons)} polygon(s) below min area — will merge into nearest neighbor")
 
         if not polygons:
             logger.warning("No valid catchment polygons created!")
@@ -471,6 +474,27 @@ class CatchmentDelineator:
 
         watersheds_gdf = gpd.GeoDataFrame(polygons, crs=crs)
         logger.info(f"Vectorized {len(watersheds_gdf)} polygons above min area")
+
+        # Merge small polygons into their closest neighbor (longest shared border)
+        if small_polygons:
+            from shapely.ops import unary_union
+            merged_count = 0
+            for sp in small_polygons:
+                sg = sp['geometry']
+                best_idx = None
+                best_shared = 0
+                for idx, row in watersheds_gdf.iterrows():
+                    shared = sg.intersection(row.geometry).length
+                    if shared > best_shared:
+                        best_shared = shared
+                        best_idx = idx
+                if best_idx is not None and best_shared > 0:
+                    watersheds_gdf.at[best_idx, 'geometry'] = unary_union(
+                        [watersheds_gdf.at[best_idx, 'geometry'], sg])
+                    merged_count += 1
+            if merged_count:
+                watersheds_gdf['area'] = watersheds_gdf.geometry.area
+                logger.info(f"Merged {merged_count} small polygon(s) into neighbors")
 
         # Smooth + simplify raster stairstep edges while keeping adjacent
         # catchments perfectly snapped. coverage_simplify treats the polygons
@@ -505,32 +529,89 @@ class CatchmentDelineator:
             how="left", predicate="within"
         )
 
-        # Build final output — one catchment per matched pour point
-        results = []
-        matched_raster_ids = set()
+        # Build final output — one catchment per matched pour point.
+        # If multiple pour points share the same watershed polygon,
+        # split it using Voronoi partitioning so each gets a unique area.
+        from collections import defaultdict
+
+        # Group pour points by their matched polygon
+        poly_to_points = defaultdict(list)
+        unmatched_points = []
 
         for idx, row in joined.iterrows():
             if 'index_right' not in row or np.isnan(row.get('index_right', np.nan)):
                 label = _get_structure_label(row, idx)
                 logger.warning(f"Pour point '{label}' did not fall inside any watershed polygon")
+                unmatched_points.append(idx)
                 continue
-
             poly_idx = int(row['index_right'])
-            raster_id = row.get('raster_id', -1)
+            poly_to_points[poly_idx].append(idx)
+
+        results = []
+        matched_raster_ids = set()
+
+        for poly_idx, point_indices in poly_to_points.items():
+            polygon = watersheds_gdf.geometry.iloc[poly_idx]
+            raster_id = watersheds_gdf.iloc[poly_idx].get('raster_id', -1)
             matched_raster_ids.add(raster_id)
 
-            label = _get_structure_label(row, idx)
-            struct_id = _get_structure_id(row, idx)
-
-            results.append({
-                'geometry': watersheds_gdf.geometry.iloc[poly_idx],
-                'watershed_id': raster_id,
-                'structure_id': struct_id,
-                'struct_name': label,
-                'struct_x': snapped_gdf.geometry.iloc[idx].x,
-                'struct_y': snapped_gdf.geometry.iloc[idx].y,
-                'area': watersheds_gdf.iloc[poly_idx]['area'],
-            })
+            if len(point_indices) == 1:
+                # Single pour point — assign whole polygon
+                idx = point_indices[0]
+                row = joined.loc[idx]
+                results.append({
+                    'geometry': polygon,
+                    'watershed_id': raster_id,
+                    'structure_id': _get_structure_id(row, idx),
+                    'struct_name': _get_structure_label(row, idx),
+                    'struct_x': snapped_gdf.geometry.iloc[idx].x,
+                    'struct_y': snapped_gdf.geometry.iloc[idx].y,
+                    'area': polygon.area,
+                })
+            else:
+                # Multiple pour points share this polygon — split by nearest point
+                logger.info(f"Splitting watershed {raster_id} among {len(point_indices)} pour points")
+                from shapely.ops import voronoi_diagram, unary_union
+                from shapely.geometry import MultiPoint
+                pts = [snapped_gdf.geometry.iloc[i] for i in point_indices]
+                mp = MultiPoint(pts)
+                try:
+                    voronoi = voronoi_diagram(mp, envelope=polygon.buffer(10))
+                    for idx in point_indices:
+                        pt = snapped_gdf.geometry.iloc[idx]
+                        row = joined.loc[idx]
+                        # Find the Voronoi cell containing this point
+                        for cell in voronoi.geoms:
+                            if cell.contains(pt):
+                                clipped = polygon.intersection(cell)
+                                if clipped.is_empty:
+                                    continue
+                                if clipped.geom_type == 'MultiPolygon':
+                                    clipped = max(clipped.geoms, key=lambda g: g.area)
+                                results.append({
+                                    'geometry': clipped,
+                                    'watershed_id': raster_id,
+                                    'structure_id': _get_structure_id(row, idx),
+                                    'struct_name': _get_structure_label(row, idx),
+                                    'struct_x': pt.x,
+                                    'struct_y': pt.y,
+                                    'area': clipped.area,
+                                })
+                                break
+                except Exception as e:
+                    logger.warning(f"Voronoi split failed for watershed {raster_id}: {e}")
+                    # Fallback: assign whole polygon to first point
+                    idx = point_indices[0]
+                    row = joined.loc[idx]
+                    results.append({
+                        'geometry': polygon,
+                        'watershed_id': raster_id,
+                        'structure_id': _get_structure_id(row, idx),
+                        'struct_name': _get_structure_label(row, idx),
+                        'struct_x': snapped_gdf.geometry.iloc[idx].x,
+                        'struct_y': snapped_gdf.geometry.iloc[idx].y,
+                        'area': polygon.area,
+                    })
 
         # Check for unmatched polygons (watersheds with no pour point)
         all_raster_ids = set(watersheds_gdf['raster_id'])

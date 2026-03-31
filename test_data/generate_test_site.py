@@ -92,14 +92,14 @@ def compute_pipe_inverts():
 # ============================================================================
 
 def _build_elevation_grid(cell=1.0):
-    """Build a realistic graded surface that produces clean rectangular catchments.
+    """Build a graded surface with each inlet as a local low point.
 
-    Uses linear ridges and valleys (like real curbs and crowns) instead of
-    Gaussian blobs. Catchment boundaries follow the built environment:
-    - Parking crown at Y=242 creates N/S drainage divide
-    - Vertical ridges between inlet pairs create E/W divides
-    - Road crown creates divide between parking and south area
-    - Building pad is a high point
+    Simple approach:
+    - Regional grade: NW high → SE low
+    - Each inlet gets a conical depression so it's the local low point
+    - Building pad is a raised plateau
+    - Detention pond is a bowl
+    - No road features — just clean drainage to inlets
     """
     cols = int(SITE_W / cell) + 1
     rows = int(SITE_H / cell) + 1
@@ -111,62 +111,27 @@ def _build_elevation_grid(cell=1.0):
     # 1) Regional grade: NW=106 → SE=97
     grid = 106.0 - (XX / SITE_W) * 3.0 - ((SITE_H - YY) / SITE_H) * 6.5
 
-    # 2) Building pad — raised plateau with smooth edges
+    # 2) Building pad — raised plateau
     bldg_cx = (BLDG["x1"] + BLDG["x2"]) / 2
     bldg_cy = (BLDG["y1"] + BLDG["y2"]) / 2
-    bldg_hw = (BLDG["x2"] - BLDG["x1"]) / 2 + 20  # 20ft graded transition
+    bldg_hw = (BLDG["x2"] - BLDG["x1"]) / 2 + 20
     bldg_hh = (BLDG["y2"] - BLDG["y1"]) / 2 + 20
-    # Chebyshev distance gives rectangular shape
     bldg_d = np.maximum(np.abs(XX - bldg_cx) / bldg_hw, np.abs(YY - bldg_cy) / bldg_hh)
     bldg_bump = 2.5 * np.clip(1.0 - bldg_d, 0, 1)
     grid += bldg_bump
 
-    # 3) Parking lot grading — the key to realistic rectangular catchments
-    pk = PARK
-    in_site = (XX >= 30) & (XX <= 670) & (YY >= 20) & (YY <= 480)
+    # 3) Each inlet is a local low point — conical depression
+    # Radius controls catchment size; depth ensures it's the low point
+    for sname, s in STRUCTURES.items():
+        sx, sy = s["x"], s["y"]
+        dist = np.sqrt((XX - sx)**2 + (YY - sy)**2)
+        # Depression radius ~80ft, depth 1.5ft at center
+        radius = 80.0
+        depth = 1.5
+        depression = depth * np.clip(1.0 - dist / radius, 0, 1)
+        grid -= depression
 
-    # Crown line at Y=242 (between the two inlet rows)
-    # Creates the N-S drainage divide — north half drains to row 1, south to row 2
-    crown_y = 242.0
-    crown_height = 0.8  # 0.8ft above gutter
-    dist_to_crown = np.abs(YY - crown_y)
-    crown_ridge = crown_height * np.clip(1.0 - dist_to_crown / 55.0, 0, 1)
-
-    # Only apply in the parking zone
-    in_park = (XX >= pk["x1"] - 10) & (XX <= pk["x2"] + 10) & (YY >= pk["y1"] - 10) & (YY <= pk["y2"] + 10)
-    grid[in_park] += crown_ridge[in_park]
-
-    # Vertical ridges between inlet columns to create E-W drainage divides
-    # Ridges at x=215, x=365, x=515 (midpoints between inlet pairs)
-    for ridge_x in [215, 365, 515]:
-        dist_to_ridge = np.abs(XX - ridge_x)
-        ridge = 0.4 * np.clip(1.0 - dist_to_ridge / 40.0, 0, 1)
-        # Only within parking Y range
-        in_ridge_zone = (YY >= pk["y1"] - 10) & (YY <= pk["y2"] + 10)
-        grid[in_ridge_zone] += ridge[in_ridge_zone]
-
-    # Longitudinal slope in parking: west higher, east lower (1%)
-    park_long = (XX - pk["x1"]) / (pk["x2"] - pk["x1"]) * 1.5
-    grid[in_park] -= park_long[in_park]
-
-    # 4) Road crown — creates divide between parking area and south
-    road_cl = (ROAD_Y1 + ROAD_Y2) / 2.0
-    dist_road = np.abs(YY - road_cl)
-    road_ridge = 0.6 * np.clip(1.0 - dist_road / 20.0, 0, 1)
-    grid += road_ridge
-
-    # Road longitudinal slope
-    in_road_zone = (YY >= ROAD_Y1 - 5) & (YY <= ROAD_Y2 + 5)
-    road_long = (XX / SITE_W) * 2.0
-    grid[in_road_zone] -= road_long[in_road_zone]
-
-    # 5) South of road — slopes toward STR-9 and STR-10
-    south_mask = (YY < ROAD_Y1 - 5)
-    # General slope toward SE (toward pond)
-    south_slope = ((SITE_H - YY) / SITE_H) * 1.5 + (XX / SITE_W) * 0.5
-    grid[south_mask] -= south_slope[south_mask] * 0.3
-
-    # 6) Detention pond — smooth bowl
+    # 4) Detention pond — smooth bowl
     dx_p = (XX - POND["cx"]) / POND["rx"]
     dy_p = (YY - POND["cy"]) / POND["ry"]
     r_pond = np.sqrt(dx_p**2 + dy_p**2)
@@ -181,11 +146,33 @@ def _build_elevation_grid(cell=1.0):
     t = t * t * (3 - 2 * t)
     grid[edge] = POND["top"] * (1 - t[edge]) + grid[edge] * t[edge]
 
-    # 7) Moderate Gaussian smooth — enough to remove pixel noise,
-    #    but NOT so much that it erases the ridges
+    # 5) Site perimeter slopes inward (no flow leaves the site)
+    border = 20
+    n_mask = YY > (SITE_H - border)
+    grid[n_mask] += 1.5 * ((YY[n_mask] - (SITE_H - border)) / border)
+    s_mask = YY < border
+    grid[s_mask] += 1.5 * ((border - YY[s_mask]) / border)
+    w_mask = XX < border
+    grid[w_mask] += 1.5 * ((border - XX[w_mask]) / border)
+    e_mask = XX > (SITE_W - border)
+    grid[e_mask] += 1.5 * ((XX[e_mask] - (SITE_W - border)) / border)
+
+    # 6) Light smooth — just enough to remove pixel noise
     pond_save = grid[in_pond & (r_pond < 0.3)].copy()
-    grid = gaussian_filter(grid, sigma=4.0)
+    grid = gaussian_filter(grid, sigma=2.0)
     grid[in_pond & (r_pond < 0.3)] = pond_save
+
+    # 7) Stamp inlet locations as definite low points after smoothing
+    # This ensures WhiteboxTools snap hits the actual inlet cell
+    for sname, s in STRUCTURES.items():
+        sx, sy = int(s["x"]), int(s["y"])
+        r, c = int(SITE_H - sy), sx
+        if 0 <= r < rows and 0 <= c < cols:
+            # Set inlet cell 0.3ft below its 5-cell neighborhood minimum
+            r1, r2 = max(0, r - 5), min(rows, r + 6)
+            c1, c2 = max(0, c - 5), min(cols, c + 6)
+            local_min = grid[r1:r2, c1:c2].min()
+            grid[r, c] = local_min - 0.3
 
     return grid, xs, ys, cols, rows
 
