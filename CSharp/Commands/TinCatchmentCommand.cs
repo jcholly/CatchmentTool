@@ -107,57 +107,29 @@ namespace CatchmentTool.Commands
                 var boundaries = grid.GetCatchmentBoundaries();
                 ed.WriteMessage($"  {boundaries.Count} catchment polygons created\n");
 
-                // 8 — Create Civil 3D catchment objects
+                // 8 — Create Civil 3D catchment objects with outlet structures
                 ed.WriteMessage("\n[4/4] Creating Civil 3D Catchment objects...\n");
-                int created = 0;
-                int errors = 0;
 
-                using (var tr = db.TransactionManager.StartTransaction())
-                {
-                    foreach (var kvp in boundaries)
-                    {
-                        int inletIdx = kvp.Key;
-                        var pts = kvp.Value;
-
-                        if (inletIdx < 0 || inletIdx >= inlets.Count || pts.Count < 3)
-                        {
-                            errors++;
-                            continue;
-                        }
-
-                        var inlet = inlets[inletIdx];
-                        var polyPts = new Point2dCollection();
-                        foreach (var pt in pts)
-                            polyPts.Add(pt);
-
-                        var info = new CatchmentPolygonInfo
-                        {
-                            BoundaryPoints = pts,
-                            StructureName = inlet.Name,
-                            StructureObjectId = inlet.ObjectId,
-                        };
-
-                        ed.WriteMessage($"  Catchment → {inlet.Name} ({pts.Count} vertices, " +
-                                        $"{ComputeArea(pts):N0} sq units)\n");
-                        created++;
-                    }
-
-                    tr.Commit();
-                }
-
-                // Create catchments using the existing CatchmentCreator
                 var creator = new CatchmentCreator(doc);
                 var polygonInfos = new List<CatchmentPolygonInfo>();
                 foreach (var kvp in boundaries)
                 {
                     int inletIdx = kvp.Key;
-                    if (inletIdx < 0 || inletIdx >= inlets.Count) continue;
+                    if (inletIdx < 0 || inletIdx >= inlets.Count || kvp.Value.Count < 3)
+                        continue;
+
+                    var inlet = inlets[inletIdx];
+                    ed.WriteMessage($"  {inlet.Name}: {kvp.Value.Count} vertices, " +
+                                    $"{ComputeArea(kvp.Value):N0} sq {GetUnits(db)}\n");
 
                     polygonInfos.Add(new CatchmentPolygonInfo
                     {
                         BoundaryPoints = kvp.Value,
-                        StructureName = inlets[inletIdx].Name,
-                        StructureObjectId = inlets[inletIdx].ObjectId,
+                        StructureName = inlet.Name,
+                        StructureObjectId = inlet.ObjectId,
+                        StructureX = inlet.Position.X,
+                        StructureY = inlet.Position.Y,
+                        Area = ComputeArea(kvp.Value),
                     });
                 }
 

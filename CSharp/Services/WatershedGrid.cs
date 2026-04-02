@@ -103,14 +103,22 @@ namespace CatchmentTool.Services
         }
 
         /// <summary>
-        /// Convert the label grid into catchment polygons (Point2dCollection per inlet).
-        /// Uses a simple boundary-tracing approach: for each inlet ID, collect all
-        /// grid cells with that label and build a convex boundary.
-        /// For cleaner polygons, export as raster and vectorize in Python.
+        /// Convert the label grid into catchment polygons using edge tracing.
+        /// Adjacent catchments share exactly the same edge coordinates,
+        /// guaranteeing snapped boundaries with no gaps or overlaps.
         /// </summary>
         public Dictionary<int, List<Point2d>> GetCatchmentBoundaries()
         {
-            var cellsByInlet = new Dictionary<int, List<(int r, int c)>>();
+            // Collect boundary edges for each label. An edge is a segment
+            // between two cell-corner vertices that separates label L from
+            // a different label (or the grid boundary).
+            // Cell (r,c) has corners at:
+            //   BL = (OriginX + c*cell, OriginY + r*cell)
+            //   BR = (OriginX + (c+1)*cell, OriginY + r*cell)
+            //   TL = (OriginX + c*cell, OriginY + (r+1)*cell)
+            //   TR = (OriginX + (c+1)*cell, OriginY + (r+1)*cell)
+
+            var edgesByLabel = new Dictionary<int, List<(Point2d a, Point2d b)>>();
 
             for (int r = 0; r < Rows; r++)
             {
@@ -119,73 +127,117 @@ namespace CatchmentTool.Services
                     int label = Labels[r, c];
                     if (label < 0) continue;
 
-                    if (!cellsByInlet.ContainsKey(label))
-                        cellsByInlet[label] = new List<(int r, int c)>();
-                    cellsByInlet[label].Add((r, c));
+                    if (!edgesByLabel.ContainsKey(label))
+                        edgesByLabel[label] = new List<(Point2d, Point2d)>();
+
+                    double x0 = OriginX + c * _cellSize;
+                    double y0 = OriginY + r * _cellSize;
+                    double x1 = x0 + _cellSize;
+                    double y1 = y0 + _cellSize;
+
+                    var bl = new Point2d(x0, y0);
+                    var br = new Point2d(x1, y0);
+                    var tl = new Point2d(x0, y1);
+                    var tr = new Point2d(x1, y1);
+
+                    // Bottom edge: neighbor at (r-1, c)
+                    if (r == 0 || Labels[r - 1, c] != label)
+                        edgesByLabel[label].Add((bl, br));
+                    // Top edge: neighbor at (r+1, c)
+                    if (r == Rows - 1 || Labels[r + 1, c] != label)
+                        edgesByLabel[label].Add((tl, tr));
+                    // Left edge: neighbor at (r, c-1)
+                    if (c == 0 || Labels[r, c - 1] != label)
+                        edgesByLabel[label].Add((bl, tl));
+                    // Right edge: neighbor at (r, c+1)
+                    if (c == Cols - 1 || Labels[r, c + 1] != label)
+                        edgesByLabel[label].Add((br, tr));
                 }
             }
 
             var result = new Dictionary<int, List<Point2d>>();
 
-            foreach (var kvp in cellsByInlet)
+            foreach (var kvp in edgesByLabel)
             {
-                var boundary = ExtractBoundary(kvp.Value);
-                if (boundary.Count >= 3)
-                    result[kvp.Key] = boundary;
+                var ring = ChainEdges(kvp.Value);
+                if (ring.Count >= 3)
+                    result[kvp.Key] = ring;
             }
 
             return result;
         }
 
         /// <summary>
-        /// Extract the outer boundary of a set of grid cells.
-        /// Finds cells that border a different label (edge cells),
-        /// then orders them into a polygon via angular sweep.
+        /// Chain unordered edge segments into a closed polygon ring.
+        /// Builds an adjacency map from each vertex to its connected edges,
+        /// then walks the chain to produce an ordered ring.
         /// </summary>
-        private List<Point2d> ExtractBoundary(List<(int r, int c)> cells)
+        private List<Point2d> ChainEdges(List<(Point2d a, Point2d b)> edges)
         {
-            var cellSet = new HashSet<(int r, int c)>(cells);
-            var edgeCells = new List<(int r, int c)>();
+            if (edges.Count == 0) return new List<Point2d>();
 
-            int[] dr = { -1, 1, 0, 0 };
-            int[] dc = { 0, 0, -1, 1 };
+            // Build adjacency: vertex → list of connected vertices
+            var adj = new Dictionary<(long, long), List<(long, long)>>();
 
-            foreach (var (r, c) in cells)
+            (long, long) Key(Point2d p)
             {
-                for (int d = 0; d < 4; d++)
+                // Quantize to avoid floating-point mismatches
+                return ((long)Math.Round(p.X * 1000), (long)Math.Round(p.Y * 1000));
+            }
+
+            Point2d FromKey((long, long) k)
+            {
+                return new Point2d(k.Item1 / 1000.0, k.Item2 / 1000.0);
+            }
+
+            foreach (var (a, b) in edges)
+            {
+                var ka = Key(a);
+                var kb = Key(b);
+                if (!adj.ContainsKey(ka)) adj[ka] = new List<(long, long)>();
+                if (!adj.ContainsKey(kb)) adj[kb] = new List<(long, long)>();
+                adj[ka].Add(kb);
+                adj[kb].Add(ka);
+            }
+
+            // Walk the longest ring starting from the first vertex
+            var visited = new HashSet<(long, long)>();
+            var ring = new List<Point2d>();
+            var start = adj.Keys.First();
+            var current = start;
+
+            do
+            {
+                visited.Add(current);
+                ring.Add(FromKey(current));
+
+                // Pick the next unvisited neighbor
+                (long, long) next = (0, 0);
+                bool found = false;
+                foreach (var nb in adj[current])
                 {
-                    var nb = (r + dr[d], c + dc[d]);
-                    if (!cellSet.Contains(nb))
+                    if (!visited.Contains(nb))
                     {
-                        edgeCells.Add((r, c));
+                        next = nb;
+                        found = true;
                         break;
                     }
                 }
+
+                if (!found)
+                {
+                    // Check if we can close the ring
+                    if (adj[current].Contains(start) && ring.Count > 2)
+                        break;
+                    else
+                        break;
+                }
+
+                current = next;
             }
+            while (current != start && ring.Count < edges.Count * 2);
 
-            if (edgeCells.Count < 3)
-            {
-                return cells.Select(cell =>
-                    new Point2d(OriginX + cell.c * _cellSize, OriginY + cell.r * _cellSize)
-                ).ToList();
-            }
-
-            // Convert to world coordinates
-            var pts = edgeCells.Select(cell =>
-                new Point2d(OriginX + cell.c * _cellSize, OriginY + cell.r * _cellSize)
-            ).ToList();
-
-            // Order by angle from centroid for a clean polygon
-            double cx = pts.Average(p => p.X);
-            double cy = pts.Average(p => p.Y);
-            pts.Sort((a, b) =>
-            {
-                double aa = Math.Atan2(a.Y - cy, a.X - cx);
-                double ba = Math.Atan2(b.Y - cy, b.X - cx);
-                return aa.CompareTo(ba);
-            });
-
-            return pts;
+            return ring;
         }
 
         /// <summary>
