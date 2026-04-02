@@ -93,7 +93,7 @@
                     <StackPanel Grid.Row="0" Grid.Column="1" Margin="10,0,0,8">
                         <TextBlock x:Name="lblSnapDistance" Text="Snap Distance:" FontWeight="SemiBold"/>
                         <TextBlock Text="Distance to snap inlets to flow path" FontSize="10" Foreground="Gray"/>
-                        <TextBox x:Name="txtSnapDistance" Text="10" Height="24" Margin="0,3,0,0"/>
+                        <TextBox x:Name="txtSnapDistance" Text="0" Height="24" Margin="0,3,0,0"/>
                     </StackPanel>
 
                     <!-- Breach Distance -->

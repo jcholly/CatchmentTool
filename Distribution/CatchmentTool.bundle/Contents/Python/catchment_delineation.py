@@ -112,8 +112,8 @@ class CatchmentDelineator:
         """Load configuration from JSON file or return defaults."""
         defaults = {
             "depression_method": "breach",
-            "snap_distance": "auto",       # Fix #1: auto-calibrate from cell size
-            "snap_multiplier": 10.0,       # Fix #1: multiplier for auto snap (10x cell = robust for Civil 3D)
+            "snap_distance": 0,            # 0 = use inlet locations directly (best for designed sites)
+            "snap_multiplier": 5.0,        # Only used when snap_distance="auto"
             "min_catchment_area": 0.5,     # Fix #10: in real-world units
             "area_unit": "acres",          # Fix #10: unit for min area
             "drawing_units": "ft",         # Fix #10: drawing linear units
@@ -227,23 +227,25 @@ class CatchmentDelineator:
         logger.info("\n[Step 3/6] Calculating flow accumulation...")
         flow_accum = self._calculate_flow_accumulation(conditioned_dem)
 
-        # Step 4: Snap pour points to flow accumulation
-        logger.info("\n[Step 4/6] Snapping pour points to flow network...")
-        snapped_points = self._snap_pour_points(flow_accum, validated_shp, snap_dist)
+        # Step 4: Snap pour points (or skip on designed sites)
+        if snap_dist > 0:
+            logger.info("\n[Step 4/6] Snapping pour points to flow network...")
+            snapped_points = self._snap_pour_points(flow_accum, validated_shp, snap_dist)
 
-        # --- Fix #1 cont'd: Post-snap quality check ---
-        snap_check = check_snap_results(
-            original_gdf=valid_gdf,
-            snapped_path=snapped_points,
-            cell_size=self.cell_size,
-            snap_dist=snap_dist,
-        )
-
-        # Resolve collisions — ensure each pour point occupies a unique cell
-        if snap_check.collisions:
-            snapped_points = self._resolve_snap_collisions(
-                snapped_points, flow_accum, valid_gdf
+            snap_check = check_snap_results(
+                original_gdf=valid_gdf,
+                snapped_path=snapped_points,
+                cell_size=self.cell_size,
+                snap_dist=snap_dist,
             )
+
+            if snap_check.collisions:
+                snapped_points = self._resolve_snap_collisions(
+                    snapped_points, flow_accum, valid_gdf
+                )
+        else:
+            logger.info("\n[Step 4/6] Snap distance = 0 — using inlet locations directly")
+            snapped_points = validated_shp
 
         # Step 5: Delineate watersheds
         logger.info("\n[Step 5/6] Delineating catchments...")
@@ -852,10 +854,10 @@ def main():
                         help='Coordinate Reference System (e.g., EPSG:2277)')
     parser.add_argument('--drawing-units', choices=['ft', 'm'], default='ft',
                         help='Drawing linear units (default: ft)')
-    parser.add_argument('--snap-distance', type=float, default=None,
-                        help='Snap distance in map units (default: auto from cell size)')
-    parser.add_argument('--snap-multiplier', type=float, default=10.0,
-                        help='Cell-size multiplier for auto snap distance (default: 10)')
+    parser.add_argument('--snap-distance', type=float, default=0,
+                        help='Snap distance in map units (0 = no snap, "auto" via config)')
+    parser.add_argument('--snap-multiplier', type=float, default=5.0,
+                        help='Cell-size multiplier for auto snap distance (default: 5)')
     parser.add_argument('--breach-distance', type=int, default=25,
                         help='Max breach distance for depression removal (default: 25)')
     parser.add_argument('--depression-method', choices=['breach', 'fill'], default='breach',
@@ -879,7 +881,7 @@ def main():
     # Build config
     config = {
         "depression_method": args.depression_method,
-        "snap_distance": args.snap_distance if args.snap_distance else "auto",
+        "snap_distance": args.snap_distance if args.snap_distance is not None else 0,
         "snap_multiplier": args.snap_multiplier,
         "breach_distance": args.breach_distance,
         "min_catchment_area": args.min_area,

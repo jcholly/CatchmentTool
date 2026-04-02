@@ -54,7 +54,7 @@ namespace CatchmentTool.UI
     public class DelineationSettings
     {
         public double CellSize { get; set; } = 1.0;
-        public double SnapDistance { get; set; } = 10.0;
+        public double SnapDistance { get; set; } = 0;
         public int BreachDistance { get; set; } = 25;
         public string DepressionMethod { get; set; } = "breach";
         public double MinCatchmentArea { get; set; } = 100.0;

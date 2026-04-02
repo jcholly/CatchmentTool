@@ -52,7 +52,7 @@ namespace CatchmentTool.Services
                 units.UnitLabel = "m";
                 units.AreaLabel = "sq m";
                 units.DefaultCellSize = 0.3;           // ~1 ft
-                units.DefaultSnapDistance = 3.0;        // ~10 ft
+                units.DefaultSnapDistance = 0;           // 0 = no snap (best for designed sites)
                 units.DefaultMinArea = 10.0;            // ~100 sq ft
 
                 units.DefaultBurnDepth = 1.0;           // ~3 ft
@@ -62,7 +62,7 @@ namespace CatchmentTool.Services
                 units.UnitLabel = "ft";
                 units.AreaLabel = "sq ft";
                 units.DefaultCellSize = 1.0;
-                units.DefaultSnapDistance = 10.0;
+                units.DefaultSnapDistance = 0;
                 units.DefaultMinArea = 100.0;
 
                 units.DefaultBurnDepth = 3.0;
