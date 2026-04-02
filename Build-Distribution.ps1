@@ -110,8 +110,8 @@ Write-Host "[4/5] Updating package metadata..." -ForegroundColor Yellow
 $packageXmlPath = Join-Path $BundleDir "PackageContents.xml"
 if (Test-Path $packageXmlPath) {
     $xml = Get-Content $packageXmlPath -Raw
-    $xml = $xml -replace 'Version="[^"]*"', "Version=`"$Version`""
-    $xml | Set-Content $packageXmlPath -Encoding UTF8
+    $xml = $xml -replace 'AppVersion="[^"]*"', "AppVersion=`"$Version`""
+    $xml | Set-Content $packageXmlPath -Encoding UTF8 -NoNewline
     Write-Host "      Updated version to $Version" -ForegroundColor Gray
 }
 
@@ -128,6 +128,7 @@ if (Test-Path $zipPath) {
 $itemsToZip = @(
     (Join-Path $DistDir "README.md"),
     (Join-Path $DistDir "Install.bat"),
+    (Join-Path $DistDir "Install-CatchmentTool.ps1"),
     (Join-Path $DistDir "Uninstall.bat"),
     $BundleDir
 ) | Where-Object { Test-Path $_ }

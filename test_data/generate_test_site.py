@@ -11,7 +11,6 @@ import numpy as np
 from pathlib import Path
 from xml.etree.ElementTree import Element, SubElement, ElementTree, indent
 from scipy.spatial import Delaunay
-from scipy.ndimage import gaussian_filter
 
 
 SITE_W, SITE_H = 700.0, 500.0
@@ -88,18 +87,16 @@ def compute_pipe_inverts():
 
 
 # ============================================================================
-# Elevation model — raster-based with Gaussian smoothing for clean contours
+# Elevation model — Voronoi drainage field
 # ============================================================================
 
 def _build_elevation_grid(cell=1.0):
-    """Build a graded surface with each inlet as a local low point.
+    """Build a graded surface where every cell drains to one of the inlets.
 
-    Simple approach:
-    - Regional grade: NW high → SE low
-    - Each inlet gets a conical depression so it's the local low point
-    - Building pad is a raised plateau
-    - Detention pond is a bowl
-    - No road features — just clean drainage to inlets
+    Uses a Voronoi drainage field: each cell's elevation increases with
+    distance from its nearest inlet at 2% grade, which dominates the mild
+    regional background grade (~0.4%).  Perimeter slopes inward and each
+    inlet is stamped as the definitive low point in its neighborhood.
     """
     cols = int(SITE_W / cell) + 1
     rows = int(SITE_H / cell) + 1
@@ -108,45 +105,19 @@ def _build_elevation_grid(cell=1.0):
     ys = SITE_H - np.arange(rows) * cell
     XX, YY = np.meshgrid(xs, ys)
 
-    # 1) Regional grade: NW=106 → SE=97
-    grid = 106.0 - (XX / SITE_W) * 3.0 - ((SITE_H - YY) / SITE_H) * 6.5
+    # 1) Mild regional grade for visual realism (NW=103 → SE=100)
+    grid = 103.0 - (XX / SITE_W) * 1.0 - ((SITE_H - YY) / SITE_H) * 2.0
 
-    # 2) Building pad — raised plateau
-    bldg_cx = (BLDG["x1"] + BLDG["x2"]) / 2
-    bldg_cy = (BLDG["y1"] + BLDG["y2"]) / 2
-    bldg_hw = (BLDG["x2"] - BLDG["x1"]) / 2 + 20
-    bldg_hh = (BLDG["y2"] - BLDG["y1"]) / 2 + 20
-    bldg_d = np.maximum(np.abs(XX - bldg_cx) / bldg_hw, np.abs(YY - bldg_cy) / bldg_hh)
-    bldg_bump = 2.5 * np.clip(1.0 - bldg_d, 0, 1)
-    grid += bldg_bump
+    # 2) Voronoi drainage — every cell slopes toward its nearest inlet
+    # at 2% grade, which dominates the ~0.4% regional grade and ensures
+    # WhiteboxTools assigns every cell to one of the 10 structures
+    min_dist_to_inlet = np.full((rows, cols), np.inf)
+    for _name, s in STRUCTURES.items():
+        d = np.sqrt((XX - s["x"])**2 + (YY - s["y"])**2)
+        min_dist_to_inlet = np.minimum(min_dist_to_inlet, d)
+    grid += min_dist_to_inlet * 0.02
 
-    # 3) Each inlet is a local low point — conical depression
-    # Radius controls catchment size; depth ensures it's the low point
-    for sname, s in STRUCTURES.items():
-        sx, sy = s["x"], s["y"]
-        dist = np.sqrt((XX - sx)**2 + (YY - sy)**2)
-        # Depression radius ~80ft, depth 1.5ft at center
-        radius = 80.0
-        depth = 1.5
-        depression = depth * np.clip(1.0 - dist / radius, 0, 1)
-        grid -= depression
-
-    # 4) Detention pond — smooth bowl
-    dx_p = (XX - POND["cx"]) / POND["rx"]
-    dy_p = (YY - POND["cy"]) / POND["ry"]
-    r_pond = np.sqrt(dx_p**2 + dy_p**2)
-    in_pond = r_pond < 1.0
-    pond_elev = np.where(
-        r_pond < 0.3, POND["bottom"],
-        POND["bottom"] + (POND["top"] - POND["bottom"]) * np.clip((r_pond - 0.3) / 0.7, 0, 1) ** 1.5
-    )
-    grid[in_pond] = pond_elev[in_pond]
-    edge = (r_pond >= 1.0) & (r_pond < 2.0)
-    t = np.clip((r_pond - 1.0) / 1.0, 0, 1)
-    t = t * t * (3 - 2 * t)
-    grid[edge] = POND["top"] * (1 - t[edge]) + grid[edge] * t[edge]
-
-    # 5) Site perimeter slopes inward (no flow leaves the site)
+    # 3) Site perimeter slopes inward (prevents edge drainage)
     border = 20
     n_mask = YY > (SITE_H - border)
     grid[n_mask] += 1.5 * ((YY[n_mask] - (SITE_H - border)) / border)
@@ -157,22 +128,15 @@ def _build_elevation_grid(cell=1.0):
     e_mask = XX > (SITE_W - border)
     grid[e_mask] += 1.5 * ((XX[e_mask] - (SITE_W - border)) / border)
 
-    # 6) Light smooth — just enough to remove pixel noise
-    pond_save = grid[in_pond & (r_pond < 0.3)].copy()
-    grid = gaussian_filter(grid, sigma=2.0)
-    grid[in_pond & (r_pond < 0.3)] = pond_save
-
-    # 7) Stamp inlet locations as definite low points after smoothing
-    # This ensures WhiteboxTools snap hits the actual inlet cell
+    # 4) Stamp inlet locations as definite low points
     for sname, s in STRUCTURES.items():
         sx, sy = int(s["x"]), int(s["y"])
         r, c = int(SITE_H - sy), sx
         if 0 <= r < rows and 0 <= c < cols:
-            # Set inlet cell 0.3ft below its 5-cell neighborhood minimum
             r1, r2 = max(0, r - 5), min(rows, r + 6)
             c1, c2 = max(0, c - 5), min(cols, c + 6)
             local_min = grid[r1:r2, c1:c2].min()
-            grid[r, c] = local_min - 0.3
+            grid[r, c] = local_min - 0.5
 
     return grid, xs, ys, cols, rows
 

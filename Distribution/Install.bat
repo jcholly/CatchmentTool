@@ -30,22 +30,37 @@ set "BUNDLE_SOURCE=%SCRIPT_DIR%CatchmentTool.bundle"
 set "APP_PLUGINS=C:\ProgramData\Autodesk\ApplicationPlugins"
 set "BUNDLE_TARGET=%APP_PLUGINS%\CatchmentTool.bundle"
 
-:: Step 1: Check for Python
+:: Step 1: Check for Python (try py launcher first, then python)
 echo  [1/3] Checking Python installation...
-python --version >nul 2>&1
-if %errorLevel% neq 0 (
-    echo        [X] Python not found!
-    echo.
-    echo        Please install Python 3.10+ from:
-    echo          https://www.python.org/downloads/
-    echo.
-    echo        IMPORTANT: Check "Add Python to PATH" during install!
-    echo.
-    pause
-    exit /b 1
+set "PYTHON_CMD="
+
+py -3 --version >nul 2>&1
+if %errorLevel% equ 0 (
+    set "PYTHON_CMD=py -3"
+    for /f "tokens=*" %%i in ('py -3 --version 2^>^&1') do set PYVER=%%i
+    echo        [OK] Found !PYVER! ^(py launcher^)
+    goto :python_found
 )
-for /f "tokens=*" %%i in ('python --version 2^>^&1') do set PYVER=%%i
-echo        [OK] Found %PYVER%
+
+python --version >nul 2>&1
+if %errorLevel% equ 0 (
+    set "PYTHON_CMD=python"
+    for /f "tokens=*" %%i in ('python --version 2^>^&1') do set PYVER=%%i
+    echo        [OK] Found !PYVER!
+    goto :python_found
+)
+
+echo        [X] Python not found!
+echo.
+echo        Please install Python 3.10+ from:
+echo          https://www.python.org/downloads/
+echo.
+echo        IMPORTANT: Check "Add Python to PATH" during install!
+echo.
+pause
+exit /b 1
+
+:python_found
 
 :: Step 2: Install Python packages
 echo.
@@ -53,13 +68,21 @@ echo  [2/3] Installing Python packages...
 echo        This may take a few minutes on first install...
 echo.
 
-pip install rasterio geopandas shapely fiona whitebox numpy --quiet 2>nul
+:: Use delayed expansion for PYTHON_CMD
+setlocal enabledelayedexpansion
+!PYTHON_CMD! -m pip install whitebox rasterio geopandas shapely fiona numpy pyproj --quiet
 if %errorLevel% neq 0 (
-    echo        [!] Warning: Some packages may have failed.
-    echo            Try running: pip install rasterio geopandas shapely fiona whitebox numpy
+    echo.
+    echo        [!] Warning: Some packages failed to install.
+    echo            Common fix: install rasterio via conda-forge:
+    echo              conda install -c conda-forge rasterio fiona geopandas
+    echo.
+    echo            Or try:  !PYTHON_CMD! -m pip install rasterio geopandas shapely fiona whitebox numpy pyproj
+    echo.
 ) else (
     echo        [OK] Python packages installed
 )
+endlocal
 
 :: Step 3: Install Civil 3D Bundle
 echo.
@@ -68,6 +91,17 @@ echo  [3/3] Installing Civil 3D plugin...
 if not exist "%BUNDLE_SOURCE%" (
     echo        [X] ERROR: CatchmentTool.bundle not found!
     echo            Expected at: %BUNDLE_SOURCE%
+    pause
+    exit /b 1
+)
+
+:: Check if DLL exists
+if not exist "%BUNDLE_SOURCE%\Contents\CatchmentTool.dll" (
+    echo        [X] ERROR: CatchmentTool.dll not found in bundle!
+    echo            The plugin was not built. You need to either:
+    echo              - Download a pre-built release from GitHub
+    echo              - Or build from source: dotnet build CSharp\CatchmentTool.csproj -c Release
+    echo.
     pause
     exit /b 1
 )

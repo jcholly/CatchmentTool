@@ -22,9 +22,12 @@
     <NoWarn>$(NoWarn);CS1701;CS1702</NoWarn>
   </PropertyGroup>
 
-  <!-- Civil 3D 2026 References - Adjust paths as needed -->
+  <!-- Civil 3D 2026 References
+       Override with: dotnet build -p:Civil3DPath="D:\Your\Path"
+       or set environment variable CIVIL3D_PATH -->
   <PropertyGroup>
-    <Civil3DPath>C:\Program Files\Autodesk\AutoCAD 2026</Civil3DPath>
+    <Civil3DPath Condition="'$(Civil3DPath)' == ''">$(CIVIL3D_PATH)</Civil3DPath>
+    <Civil3DPath Condition="'$(Civil3DPath)' == ''">C:\Program Files\Autodesk\AutoCAD 2026</Civil3DPath>
   </PropertyGroup>
 
   <ItemGroup>

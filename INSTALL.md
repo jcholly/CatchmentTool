@@ -8,12 +8,13 @@
 
 ---
 
-## Option A: Install from ZIP (end users)
+## Option A: Install from Release ZIP (recommended for end users)
 
-1. Download `CatchmentTool-v1.0.0.zip` from the Releases page
+1. Download the latest `CatchmentTool-v*.zip` from the [Releases](https://github.com/jcholly/CatchmentTool/releases) page
 2. Extract it anywhere
-3. Right-click **Install.bat** and select **Run as administrator**
-   - This installs Python dependencies and copies the plugin bundle
+3. Right-click **Install.bat** → **Run as administrator**
+   - Installs Python dependencies and copies the plugin bundle to ApplicationPlugins
+   - Alternatively, right-click **Install-CatchmentTool.ps1** → **Run with PowerShell** (better error messages)
 4. Start (or restart) Civil 3D
 
 ## Option B: Build from Source (developers)
@@ -30,7 +31,10 @@ pip install -r Python/requirements.txt
 .\Build-Distribution.ps1 -Install
 ```
 
-Restart Civil 3D after installing.
+> **Note:** The C# build requires Civil 3D 2026 DLLs. If Civil 3D is not at the default path, set the environment variable `CIVIL3D_PATH` or pass it directly:
+> ```powershell
+> dotnet build CSharp/CatchmentTool.csproj -c Release -p:Civil3DPath="D:\Your\Civil3D\Path"
+> ```
 
 ### Updating Python-only changes
 
@@ -38,6 +42,24 @@ If you only changed Python files (no C# changes), you can redeploy without resta
 
 ```powershell
 .\Build-Distribution.ps1 -Install -SkipBuild
+```
+
+---
+
+## Python Dependencies on Windows
+
+The GIS stack (`rasterio`, `fiona`, `geopandas`) can be tricky to install on Windows via pip alone. If `pip install` fails with compilation errors:
+
+**Option 1 — conda-forge (most reliable):**
+```
+conda install -c conda-forge rasterio fiona geopandas shapely whitebox numpy pyproj
+```
+
+**Option 2 — Pre-built wheels:**
+Download wheels from [Christoph Gohlke's page](https://github.com/cgohlke/geospatial-wheels/) and install manually:
+```
+pip install rasterio-*.whl fiona-*.whl
+pip install geopandas shapely whitebox numpy pyproj
 ```
 
 ---
@@ -63,7 +85,7 @@ If you only changed Python files (no C# changes), you can redeploy without resta
 ## Troubleshooting
 
 ### Python not found
-The tool searches for Python in this order: bundled Python, `py` launcher, `python` on PATH, common install locations. Make sure Python 3.10+ is installed and on your PATH.
+The tool searches for Python in this order: bundled Python, `py` launcher, `python` on PATH, common install locations. Make sure Python 3.10+ is installed. On Windows, the `py` launcher (installed by default with Python) is the most reliable method.
 
 ### WhiteboxTools errors
 Verify WhiteboxTools is installed:
@@ -76,7 +98,7 @@ Check that the bundle exists at:
 ```
 C:\ProgramData\Autodesk\ApplicationPlugins\CatchmentTool.bundle\
 ```
-The `PackageContents.xml` file in that directory tells Civil 3D to load the plugin.
+The folder must contain `Contents\CatchmentTool.dll`. If the DLL is missing, you need to build from source or download a release ZIP.
 
 ### "No inlet structures found"
 The tool looks for structures with part families containing: inlet, catch basin, area drain, curb inlet, grate, etc. If your structures use different naming, modify the filter in `StructureExtractor.cs`.

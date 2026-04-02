@@ -501,7 +501,7 @@ class CatchmentDelineator:
         # as a coverage — shared edges are simplified identically, so no gaps
         # or overlaps are introduced. Applied here (before spatial join) where
         # the raster polygons form a perfect tiling.
-        smooth_tol = self.config.get("smooth_radius") or (cell_size * 2.0)
+        smooth_tol = self.config.get("smooth_radius") or (cell_size * 1.0)
         try:
             from shapely import coverage_simplify
             raw_geoms = np.array(list(watersheds_gdf.geometry), dtype=object)
