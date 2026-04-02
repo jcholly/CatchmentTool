@@ -239,6 +239,12 @@ class CatchmentDelineator:
             snap_dist=snap_dist,
         )
 
+        # Resolve collisions — ensure each pour point occupies a unique cell
+        if snap_check.collisions:
+            snapped_points = self._resolve_snap_collisions(
+                snapped_points, flow_accum, valid_gdf
+            )
+
         # Step 5: Delineate watersheds
         logger.info("\n[Step 5/6] Delineating catchments...")
         watersheds_raster = self._delineate_watersheds(flow_dir, snapped_points)
@@ -399,6 +405,95 @@ class CatchmentDelineator:
             pour_pts=pour_pts_shp, flow_accum=flow_accum,
             output=output, snap_dist=snap_dist
         )
+        return output
+
+    def _resolve_snap_collisions(self, snapped_path: str,
+                                  flow_accum_path: str,
+                                  original_gdf: gpd.GeoDataFrame) -> str:
+        """Move collided pour points to unique cells.
+
+        When multiple inlets snap to the same high-accumulation cell
+        (e.g., along a trunk pipe), only the last one produces a watershed.
+        This method detects collisions and moves extras to the next-best
+        unique cell within a small search window around each point's
+        original location, guaranteeing one watershed per inlet.
+
+        Returns path to the de-duplicated shapefile.
+        """
+        snapped_gdf = gpd.read_file(snapped_path)
+
+        with rasterio.open(flow_accum_path) as src:
+            accum_data = src.read(1)
+            transform = src.transform
+            cell_size = max(src.res)
+
+        def _xy_to_cell(x, y):
+            col, row = ~transform * (x, y)
+            return (int(round(row)), int(round(col)))
+
+        def _cell_to_xy(r, c):
+            x, y = transform * (c + 0.5, r + 0.5)
+            return (x, y)
+
+        occupied = {}
+        collision_indices = []
+
+        for i, pt in enumerate(snapped_gdf.geometry):
+            cell = _xy_to_cell(pt.x, pt.y)
+            if cell in occupied:
+                collision_indices.append(i)
+            else:
+                occupied[cell] = i
+
+        if not collision_indices:
+            return snapped_path
+
+        logger.warning(
+            f"{len(collision_indices)} pour point(s) collided after snapping — "
+            f"resolving to unique cells"
+        )
+
+        rows, cols = accum_data.shape
+        search_radius = max(3, int(cell_size * 5 / cell_size))
+
+        from shapely.geometry import Point
+        for i in collision_indices:
+            orig_pt = original_gdf.geometry.iloc[i]
+            or_, oc_ = _xy_to_cell(orig_pt.x, orig_pt.y)
+
+            candidates = []
+            for dr in range(-search_radius, search_radius + 1):
+                for dc in range(-search_radius, search_radius + 1):
+                    r, c = or_ + dr, oc_ + dc
+                    if 0 <= r < rows and 0 <= c < cols:
+                        cell = (r, c)
+                        if cell not in occupied:
+                            candidates.append((accum_data[r, c], r, c))
+
+            if candidates:
+                candidates.sort(key=lambda t: t[0], reverse=True)
+                best_accum, best_r, best_c = candidates[0]
+                x, y = _cell_to_xy(best_r, best_c)
+                snapped_gdf.geometry.iloc[i] = Point(x, y)
+                occupied[(best_r, best_c)] = i
+                name = "?"
+                for col_name in ('name', 'label', 'structure_id', 'struct_nam'):
+                    if col_name in original_gdf.columns:
+                        name = original_gdf.iloc[i][col_name]
+                        break
+                logger.info(
+                    f"  Moved '{name}' to unique cell ({best_r},{best_c}) "
+                    f"accum={best_accum:.0f}"
+                )
+            else:
+                logger.warning(
+                    f"  Could not find unique cell for point {i} — "
+                    f"it may share a watershed with another inlet"
+                )
+
+        output = str(self.working_dir / "pour_points_deduped.shp")
+        snapped_gdf.to_file(output)
+        logger.info(f"Saved de-duplicated pour points: {output}")
         return output
 
     def _delineate_watersheds(self, flow_dir: str, pour_points: str) -> str:
