@@ -85,9 +85,9 @@ AUTODESK_TO_EPSG = {
     # -- New Jersey --
     "NJ83-F": 3424, "NJ83": 32111,
     # -- New Mexico --
-    "NM83-EF": 2257, "NM83-CF": 2258, "NM83-WF": 2259,
+    "NM83-EF": 2902, "NM83-CF": 2903, "NM83-WF": 2904,
     # -- New York --
-    "NY83-EF": 2260, "NY83-CF": 2261, "NY83-WF": 2262, "NY83-LIF": 2263,
+    "NY83-EF": 2905, "NY83-CF": 2906, "NY83-WF": 2907, "NY83-LIF": 2908,
     # -- North Carolina --
     "NC83-F": 2264, "NC83": 32119,
     # -- North Dakota --

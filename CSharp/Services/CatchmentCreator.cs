@@ -1048,13 +1048,19 @@ namespace CatchmentTool.Services
                 {
                     var coordinates = geometry["coordinates"] as JArray;
                     JArray largestRing = null;
+                    double largestArea = 0;
                     foreach (JArray polygon in coordinates)
                     {
                         if (polygon.Count > 0)
                         {
                             var ring = polygon[0] as JArray;
-                            if (largestRing == null || ring.Count > largestRing.Count)
+                            var pts = ParseCoordinateRing(ring);
+                            double area = Math.Abs(CalculatePolygonArea(pts));
+                            if (largestRing == null || area > largestArea)
+                            {
                                 largestRing = ring;
+                                largestArea = area;
+                            }
                         }
                     }
                     if (largestRing != null)
@@ -1068,6 +1074,22 @@ namespace CatchmentTool.Services
             return catchments;
         }
         
+        /// <summary>
+        /// Calculate the signed area of a polygon using the Shoelace formula.
+        /// </summary>
+        private double CalculatePolygonArea(List<Point2d> pts)
+        {
+            double area = 0;
+            int n = pts.Count;
+            for (int i = 0; i < n; i++)
+            {
+                int j = (i + 1) % n;
+                area += pts[i].X * pts[j].Y;
+                area -= pts[j].X * pts[i].Y;
+            }
+            return area / 2.0;
+        }
+
         private List<Point2d> ParseCoordinateRing(JArray ring)
         {
             var points = new List<Point2d>();

@@ -240,16 +240,44 @@ namespace CatchmentTool.Services
         }
 
         /// <summary>
-        /// Returns a fixed 1 ft x 1 ft cell size for DEM export.
-        /// This provides a good balance between accuracy and performance for catchment delineation.
+        /// Calculates an optimal cell size based on TIN triangle density and surface extent.
+        /// Balances accuracy (small cells) against performance (large rasters).
+        /// Target: keep total cells under ~25M while preserving detail.
         /// </summary>
         private double CalculateOptimalCellSize(TinSurface surface)
         {
-            // Fixed 1 ft cell size - good balance for catchment work
-            double cellSize = 1.0;
-            
-            ReportProgress($"Using fixed cell size: {cellSize:F2} ft");
-            
+            var props = surface.GetGeneralProperties();
+            double extentX = props.MaximumCoordinateX - props.MinimumCoordinateX;
+            double extentY = props.MaximumCoordinateY - props.MinimumCoordinateY;
+
+            // Get triangle count as proxy for surface detail
+            int numTriangles = props.NumberOfTriangles;
+            int numPoints = props.NumberOfPoints;
+
+            // Estimate mean triangle edge length from point count and extent
+            double surfaceArea = extentX * extentY;
+            double meanTriArea = surfaceArea / Math.Max(numTriangles, 1);
+            double meanEdgeLength = Math.Sqrt(meanTriArea * 2.0); // approx edge from triangle area
+
+            // Cell size should be roughly half the mean edge length to capture detail
+            double cellFromDensity = meanEdgeLength * 0.5;
+
+            // Cap to keep raster manageable (max ~25M cells)
+            const long maxCells = 25_000_000;
+            double cellFromExtent = Math.Sqrt((extentX * extentY) / maxCells);
+
+            // Use the larger of the two (coarser) to stay within performance limits
+            double cellSize = Math.Max(cellFromDensity, cellFromExtent);
+
+            // Clamp to reasonable bounds (0.25 ft to 5 ft for imperial, or equivalent)
+            cellSize = Math.Max(0.25, Math.Min(cellSize, 5.0));
+
+            // Round to a clean value
+            cellSize = Math.Round(cellSize * 4.0) / 4.0; // snap to 0.25 increments
+            if (cellSize < 0.25) cellSize = 0.25;
+
+            ReportProgress($"Adaptive cell size: {cellSize:F2} (surface has {numPoints:N0} points, {numTriangles:N0} triangles)");
+
             return cellSize;
         }
         
@@ -288,8 +316,10 @@ namespace CatchmentTool.Services
                 sw.WriteLine($"PIXELTYPE      FLOAT");
                 sw.WriteLine($"BYTEORDER      I"); // Intel byte order (little-endian)
                 sw.WriteLine($"LAYOUT         BIL");
-                sw.WriteLine($"ULXMAP         {originX:F10}");
-                sw.WriteLine($"ULYMAP         {originY:F10}");
+                // ULXMAP/ULYMAP are cell-center coordinates for the upper-left pixel.
+                // Since sampling starts at (originX + 0.5*cellSize), the header must reflect that.
+                sw.WriteLine($"ULXMAP         {(originX + cellSize * 0.5):F10}");
+                sw.WriteLine($"ULYMAP         {(originY - cellSize * 0.5):F10}");
                 sw.WriteLine($"XDIM           {cellSize:F10}");
                 sw.WriteLine($"YDIM           {cellSize:F10}");
                 sw.WriteLine($"NODATA         {noData}");

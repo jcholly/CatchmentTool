@@ -25,7 +25,7 @@ namespace CatchmentTool.UI
     {
         public double CellSize { get; set; } = 1.0;
         public double SnapDistance { get; set; } = 10.0;
-        public int BreachDistance { get; set; } = 10;
+        public int BreachDistance { get; set; } = 25;
         public string DepressionMethod { get; set; } = "breach";
         public double MinCatchmentArea { get; set; } = 100.0;
         public bool BurnPipes { get; set; } = true;
@@ -381,7 +381,7 @@ namespace CatchmentTool.UI
             {
                 CellSize = GetCellSize(),
                 SnapDistance = GetDoubleValue(txtSnapDistance, _units.DefaultSnapDistance),
-                BreachDistance = GetIntValue(txtBreachDistance, 10),
+                BreachDistance = GetIntValue(txtBreachDistance, 25),
                 DepressionMethod = GetDepressionMethod(),
                 MinCatchmentArea = GetDoubleValue(txtMinArea, _units.DefaultMinArea),
 
@@ -629,6 +629,17 @@ namespace CatchmentTool.UI
             Log($"    Catchments created: {importResult.CatchmentsCreated}");
             Log($"    Processing time: {stopwatch.Elapsed.TotalSeconds:F1} seconds");
             Log($"    Working directory: {tempDir}");
+
+            // Clean up temp directory now that import is done
+            try
+            {
+                Directory.Delete(tempDir, true);
+                Log($"    Cleaned up temp directory");
+            }
+            catch
+            {
+                Log($"    Note: Could not clean up temp directory: {tempDir}");
+            }
 
             MessageBox.Show(
                 $"Catchment delineation complete!\n\n" +

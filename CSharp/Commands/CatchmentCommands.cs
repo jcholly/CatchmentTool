@@ -100,18 +100,18 @@ namespace CatchmentTool.Commands
                         for (int i = 0; i < pline.NumberOfVertices; i++)
                             pts.Add(pline.GetPoint2dAt(i));
 
-                        // Point-in-polygon: find the structure inside this polygon
-                        ObjectId matchedId   = ObjectId.Null;
-                        string  matchedName  = "";
+                        // Point-in-polygon: find ALL structures inside this polygon
+                        var matchedStructures = new List<(ObjectId Id, string Name)>();
                         foreach (var (sId, sName, sPos) in structures)
                         {
                             if (PointInPolygon(new Point2d(sPos.X, sPos.Y), pts))
                             {
-                                matchedId   = sId;
-                                matchedName = sName;
-                                break;
+                                matchedStructures.Add((sId, sName));
                             }
                         }
+
+                        ObjectId matchedId   = matchedStructures.Count > 0 ? matchedStructures[0].Id : ObjectId.Null;
+                        string  matchedName  = matchedStructures.Count > 0 ? matchedStructures[0].Name : "";
 
                         polygons.Add(new CatchmentPolygonInfo
                         {
@@ -120,9 +120,18 @@ namespace CatchmentTool.Commands
                             StructureObjectId = matchedId,
                         });
 
-                        ed.WriteMessage(matchedName.Length > 0
-                            ? $"  [{num:D2}] outlet → {matchedName}\n"
-                            : $"  [{num:D2}] no structure found inside — catchment will have no outlet\n");
+                        if (matchedStructures.Count > 1)
+                        {
+                            ed.WriteMessage($"  [{num:D2}] outlet → {matchedName} (WARNING: {matchedStructures.Count} structures inside polygon: {string.Join(", ", matchedStructures.Select(s => s.Name))})\n");
+                        }
+                        else if (matchedName.Length > 0)
+                        {
+                            ed.WriteMessage($"  [{num:D2}] outlet → {matchedName}\n");
+                        }
+                        else
+                        {
+                            ed.WriteMessage($"  [{num:D2}] no structure found inside — catchment will have no outlet\n");
+                        }
 
                         num++;
                     }

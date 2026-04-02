@@ -113,7 +113,7 @@ class CatchmentDelineator:
         defaults = {
             "depression_method": "breach",
             "snap_distance": "auto",       # Fix #1: auto-calibrate from cell size
-            "snap_multiplier": 5.0,        # Fix #1: multiplier for auto snap
+            "snap_multiplier": 10.0,       # Fix #1: multiplier for auto snap (10x cell = robust for Civil 3D)
             "min_catchment_area": 0.5,     # Fix #10: in real-world units
             "area_unit": "acres",          # Fix #10: unit for min area
             "drawing_units": "ft",         # Fix #10: drawing linear units
@@ -335,27 +335,36 @@ class CatchmentDelineator:
             nodata = src.nodata
 
         pipe_shapes = []
+        cell_size = abs(transform[0])
         for feature in features:
             coords = feature['geometry']['coordinates']
             if len(coords) >= 2:
                 line = LineString(coords)
-                cell_size = abs(transform[0])
-                buffered = line.buffer(cell_size * 1.5)
-                pipe_shapes.append((buffered, 1))
+                # Scale buffer by pipe diameter (if available), min 1.5x cell size
+                diameter = feature.get('properties', {}).get('diameter', 0) or 0
+                buffer_dist = max(cell_size * 1.5, diameter * 0.75)
+                buffered = line.buffer(buffer_dist)
+                # Scale burn depth by pipe diameter: larger pipes get deeper burns
+                pipe_burn = burn_depth
+                if diameter > 0:
+                    # Scale: small pipes (< 12") get base depth, large pipes get up to 2x
+                    pipe_burn = burn_depth * max(1.0, min(2.0, diameter / 12.0))
+                pipe_shapes.append((buffered, pipe_burn))
 
         if pipe_shapes:
-            pipe_mask = rasterize(
+            # Rasterize with per-pipe burn depths (float values)
+            burn_mask = rasterize(
                 pipe_shapes, out_shape=dem_data.shape,
-                transform=transform, fill=0, dtype='uint8'
+                transform=transform, fill=0.0, dtype='float32'
             )
             burned_dem = dem_data.copy()
-            pipe_cells = pipe_mask > 0
-            burned_dem[pipe_cells] = burned_dem[pipe_cells] - burn_depth
+            pipe_cells = burn_mask > 0
+            burned_dem[pipe_cells] = burned_dem[pipe_cells] - burn_mask[pipe_cells]
 
             if nodata is not None:
-                burned_dem[burned_dem <= nodata] = nodata + 0.1
+                burned_dem[burned_dem == nodata] = nodata
 
-            logger.info(f"Burned {np.sum(pipe_cells):,} cells")
+            logger.info(f"Burned {np.sum(pipe_cells):,} cells (depth varies by pipe diameter)")
 
             output_path = self.working_dir / "dem_burned.tif"
             with rasterio.open(output_path, 'w', **profile) as dst:
@@ -371,7 +380,7 @@ class CatchmentDelineator:
     def _condition_dem(self) -> str:
         output = str(self.working_dir / "dem_conditioned.tif")
         if self.config["depression_method"] == "breach":
-            breach_dist = self.config.get("breach_distance", 10)
+            breach_dist = self.config.get("breach_distance", 25)
             logger.info(f"Using breach depressions method (dist={breach_dist})...")
             self.wbt.breach_depressions_least_cost(
                 dem=str(self.dem_path), output=output,
@@ -791,10 +800,10 @@ def main():
                         help='Drawing linear units (default: ft)')
     parser.add_argument('--snap-distance', type=float, default=None,
                         help='Snap distance in map units (default: auto from cell size)')
-    parser.add_argument('--snap-multiplier', type=float, default=5.0,
-                        help='Cell-size multiplier for auto snap distance (default: 5)')
-    parser.add_argument('--breach-distance', type=int, default=10,
-                        help='Max breach distance for depression removal (default: 10)')
+    parser.add_argument('--snap-multiplier', type=float, default=10.0,
+                        help='Cell-size multiplier for auto snap distance (default: 10)')
+    parser.add_argument('--breach-distance', type=int, default=25,
+                        help='Max breach distance for depression removal (default: 25)')
     parser.add_argument('--depression-method', choices=['breach', 'fill'], default='breach',
                         help='Depression handling method (default: breach)')
     parser.add_argument('--min-area', type=float, default=0.5,
