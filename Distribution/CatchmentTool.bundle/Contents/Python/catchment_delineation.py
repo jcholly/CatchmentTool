@@ -217,7 +217,7 @@ class CatchmentDelineator:
 
         # Step 1: Preprocess DEM (fill/breach depressions)
         logger.info("\n[Step 1/6] Preprocessing DEM - removing depressions...")
-        conditioned_dem = self._condition_dem()
+        conditioned_dem = self._condition_dem(valid_gdf)
 
         # Step 2: Calculate flow direction
         logger.info("\n[Step 2/6] Calculating D8 flow direction...")
@@ -377,20 +377,74 @@ class CatchmentDelineator:
     # WhiteboxTools processing steps
     # ------------------------------------------------------------------
 
-    def _condition_dem(self) -> str:
+    def _condition_dem(self, pour_points_gdf: gpd.GeoDataFrame) -> str:
+        """Condition DEM while preserving designed drainage near inlets.
+
+        Standard breach/fill treats every pit as an artifact, but on graded
+        civil sites the depressions at inlets are intentional.  This method:
+        1. Saves original elevations within a protection radius of each inlet
+        2. Runs breach/fill normally to fix genuine artifacts
+        3. Restores the original elevations inside the protected zones
+        4. Re-stamps each inlet cell as the local low point
+        """
+        raw_output = str(self.working_dir / "dem_conditioned_raw.tif")
         output = str(self.working_dir / "dem_conditioned.tif")
+
         if self.config["depression_method"] == "breach":
             breach_dist = self.config.get("breach_distance", 25)
             logger.info(f"Using breach depressions method (dist={breach_dist})...")
             self.wbt.breach_depressions_least_cost(
-                dem=str(self.dem_path), output=output,
+                dem=str(self.dem_path), output=raw_output,
                 dist=breach_dist, fill=True
             )
         else:
             logger.info("Using fill depressions method...")
             self.wbt.fill_depressions(
-                dem=str(self.dem_path), output=output, fix_flats=True
+                dem=str(self.dem_path), output=raw_output, fix_flats=True
             )
+
+        # Restore original elevations near inlets
+        protect_radius = self.config.get("inlet_protect_radius", 5)
+        logger.info(
+            f"Protecting inlet neighborhoods ({protect_radius} cells) "
+            f"from conditioning changes"
+        )
+
+        with rasterio.open(str(self.dem_path)) as orig_src:
+            orig_data = orig_src.read(1)
+            transform = orig_src.transform
+            profile = orig_src.profile.copy()
+
+        with rasterio.open(raw_output) as cond_src:
+            cond_data = cond_src.read(1)
+
+        rows, cols = orig_data.shape
+        restored_cells = 0
+
+        for _, pt in pour_points_gdf.iterrows():
+            col_f, row_f = ~transform * (pt.geometry.x, pt.geometry.y)
+            cr, cc = int(round(row_f)), int(round(col_f))
+
+            r1 = max(0, cr - protect_radius)
+            r2 = min(rows, cr + protect_radius + 1)
+            c1 = max(0, cc - protect_radius)
+            c2 = min(cols, cc + protect_radius + 1)
+
+            # Restore original elevations in the protection window
+            patch = orig_data[r1:r2, c1:c2]
+            cond_data[r1:r2, c1:c2] = patch
+            restored_cells += (r2 - r1) * (c2 - c1)
+
+            # Re-stamp inlet cell as definitive low point
+            if 0 <= cr < rows and 0 <= cc < cols:
+                local_min = orig_data[r1:r2, c1:c2].min()
+                cond_data[cr, cc] = local_min - 0.5
+
+        logger.info(f"Restored {restored_cells:,} cells near {len(pour_points_gdf)} inlets")
+
+        with rasterio.open(output, 'w', **profile) as dst:
+            dst.write(cond_data.astype('float32'), 1)
+
         return output
 
     def _calculate_flow_direction(self, dem: str) -> str:
