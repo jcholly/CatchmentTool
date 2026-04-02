@@ -247,12 +247,12 @@ namespace CatchmentTool.Services
         private double CalculateOptimalCellSize(TinSurface surface)
         {
             var props = surface.GetGeneralProperties();
+            var tinProps = surface.GetTinProperties();
             double extentX = props.MaximumCoordinateX - props.MinimumCoordinateX;
             double extentY = props.MaximumCoordinateY - props.MinimumCoordinateY;
 
-            // Get triangle count as proxy for surface detail
-            int numTriangles = props.NumberOfTriangles;
-            int numPoints = props.NumberOfPoints;
+            int numTriangles = (int)tinProps.NumberOfTriangles;
+            int numPoints = (int)props.NumberOfPoints;
 
             // Estimate mean triangle edge length from point count and extent
             double surfaceArea = extentX * extentY;

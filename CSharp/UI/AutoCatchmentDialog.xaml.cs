@@ -18,6 +18,36 @@ using CatchmentTool.Services;
 
 namespace CatchmentTool.UI
 {
+    public class SurfaceInfo
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; }
+        public string DisplayName { get; set; }
+    }
+
+    public class NetworkInfo
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; }
+        public string DisplayName { get; set; }
+    }
+
+    public class StructureTypeInfo : INotifyPropertyChanged
+    {
+        public string PartFamilyName { get; set; }
+        public int Count { get; set; }
+        public string DisplayName { get; set; }
+
+        private bool _isSelected;
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set { _isSelected = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected))); }
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+    }
+
     /// <summary>
     /// Settings for catchment delineation analysis.
     /// </summary>
