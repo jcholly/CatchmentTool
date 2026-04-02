@@ -3,7 +3,7 @@
     "snap_distance": 10.0,
     "breach_distance": 10,
     "min_catchment_area": 100.0,
-    "simplify_tolerance": 1.0,
+    "smooth_radius": null,
     "flow_accumulation_threshold": 100,
     "burn_pipes": null,
     "burn_depth": 3.0,
@@ -12,7 +12,7 @@
         "snap_distance": "Distance in drawing units to snap pour points to flow network",
         "breach_distance": "Max breach channel length in cells",
         "min_catchment_area": "Minimum catchment area in square drawing units",
-        "simplify_tolerance": "Polygon simplification tolerance in drawing units (0 = none)",
+        "smooth_radius": "Polygon smoothing tolerance in drawing units (null = auto: 2x cell size)",
         "flow_accumulation_threshold": "Number of upstream cells to define a stream channel",
         "burn_pipes": "Path to pipe GeoJSON for DEM burning (null = disabled)",
         "burn_depth": "Depth to burn pipes into DEM in drawing units"
