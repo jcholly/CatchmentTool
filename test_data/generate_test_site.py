@@ -94,9 +94,10 @@ def _build_elevation_grid(cell=1.0):
     """Build a graded surface where every cell drains to one of the inlets.
 
     Uses a Voronoi drainage field: each cell's elevation increases with
-    distance from its nearest inlet at 2% grade, which dominates the mild
-    regional background grade (~0.4%).  Perimeter slopes inward and each
-    inlet is stamped as the definitive low point in its neighborhood.
+    distance from its nearest inlet at 5% grade, which dominates the
+    regional background grade (~2%).  Perimeter slopes inward and each
+    inlet is stamped 1.5 ft below its neighborhood minimum.
+    Total relief ~25 ft to avoid ambiguous drainage from rasterization.
     """
     cols = int(SITE_W / cell) + 1
     rows = int(SITE_H / cell) + 1
@@ -105,28 +106,28 @@ def _build_elevation_grid(cell=1.0):
     ys = SITE_H - np.arange(rows) * cell
     XX, YY = np.meshgrid(xs, ys)
 
-    # 1) Mild regional grade for visual realism (NW=103 → SE=100)
-    grid = 103.0 - (XX / SITE_W) * 1.0 - ((SITE_H - YY) / SITE_H) * 2.0
+    # 1) Regional grade: NW=115 → SE=100 (15 ft drop, ~2% average)
+    grid = 115.0 - (XX / SITE_W) * 5.0 - ((SITE_H - YY) / SITE_H) * 10.0
 
     # 2) Voronoi drainage — every cell slopes toward its nearest inlet
-    # at 2% grade, which dominates the ~0.4% regional grade and ensures
-    # WhiteboxTools assigns every cell to one of the 10 structures
+    # at 5% grade, strongly dominating the regional grade and giving
+    # WhiteboxTools unambiguous flow direction to each inlet
     min_dist_to_inlet = np.full((rows, cols), np.inf)
     for _name, s in STRUCTURES.items():
         d = np.sqrt((XX - s["x"])**2 + (YY - s["y"])**2)
         min_dist_to_inlet = np.minimum(min_dist_to_inlet, d)
-    grid += min_dist_to_inlet * 0.02
+    grid += min_dist_to_inlet * 0.05
 
     # 3) Site perimeter slopes inward (prevents edge drainage)
     border = 20
     n_mask = YY > (SITE_H - border)
-    grid[n_mask] += 1.5 * ((YY[n_mask] - (SITE_H - border)) / border)
+    grid[n_mask] += 4.0 * ((YY[n_mask] - (SITE_H - border)) / border)
     s_mask = YY < border
-    grid[s_mask] += 1.5 * ((border - YY[s_mask]) / border)
+    grid[s_mask] += 4.0 * ((border - YY[s_mask]) / border)
     w_mask = XX < border
-    grid[w_mask] += 1.5 * ((border - XX[w_mask]) / border)
+    grid[w_mask] += 4.0 * ((border - XX[w_mask]) / border)
     e_mask = XX > (SITE_W - border)
-    grid[e_mask] += 1.5 * ((XX[e_mask] - (SITE_W - border)) / border)
+    grid[e_mask] += 4.0 * ((XX[e_mask] - (SITE_W - border)) / border)
 
     # 4) Stamp inlet locations as definite low points
     for sname, s in STRUCTURES.items():
@@ -136,7 +137,7 @@ def _build_elevation_grid(cell=1.0):
             r1, r2 = max(0, r - 5), min(rows, r + 6)
             c1, c2 = max(0, c - 5), min(cols, c + 6)
             local_min = grid[r1:r2, c1:c2].min()
-            grid[r, c] = local_min - 0.5
+            grid[r, c] = local_min - 1.5
 
     return grid, xs, ys, cols, rows
 
