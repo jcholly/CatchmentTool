@@ -640,66 +640,147 @@ namespace CatchmentTool.Services
                     _printedCatchmentMethods = true;
                 }
                 
-                // Create Point3dCollection from polygon boundary points
-                var boundaryPoints = new Point3dCollection();
-                foreach (var pt in polygon.BoundaryPoints)
+                // Try to create catchment with original boundary first, fallback to simplified if needed
+                // - Sample Z elevation from the TIN surface for proper draping
+                // - Ensure the ring is explicitly closed (first point == last point)
+                // - Retry with increasing simplification tolerance if "not a simple polygon" error occurs
+
+                TinSurface tinSurface = null;
+                if (!surfaceId.IsNull)
                 {
-                    boundaryPoints.Add(new Point3d(pt.X, pt.Y, 0));
-                }
-                
-                // Get all Create methods
-                var methods = typeof(Catchment).GetMethods(BindingFlags.Public | BindingFlags.Static)
-                    .Where(m => m.Name == "Create").ToList();
-                
-                // Try each method signature
-                foreach (var method in methods)
-                {
-                    var parms = method.GetParameters();
-                    
                     try
                     {
-                        object[] args = null;
-                        
-                        // Match parameter patterns - now we know the signature:
-                        // (String name, ObjectId styleId, ObjectId catchmentGroupId, ObjectId surfaceId, Point3dCollection boundary)
-                        if (parms.Length == 5)
+                        tinSurface = tr.GetObject(surfaceId, OpenMode.ForRead) as TinSurface;
+                    }
+                    catch { }
+                }
+
+                // Try with increasing simplification tolerances: 0 (original), 0.5, 1.0, 2.0
+                double[] simplifyTolerances = { 0, 0.5, 1.0, 2.0 };
+                string lastError = null;
+
+                foreach (var simplifyTol in simplifyTolerances)
+                {
+                    try
+                    {
+                        // Simplify boundary points if tolerance > 0
+                        List<Point2d> pointsToUse = simplifyTol > 0
+                            ? SimplifyPolygonBoundary(polygon.BoundaryPoints, simplifyTol)
+                            : polygon.BoundaryPoints;
+
+                        // Build 3D boundary points with Z from surface
+                        var boundaryPoints = new Point3dCollection();
+                        foreach (var pt in pointsToUse)
                         {
-                            if (parms[0].ParameterType == typeof(string) &&
-                                parms[4].ParameterType == typeof(Point3dCollection))
+                            double z = 0;
+                            if (tinSurface != null)
                             {
-                                // Correct order: name, styleId, groupId, surfaceId, boundary
-                                args = new object[] { name, catchmentStyleId, catchmentGroupId, surfaceId, boundaryPoints };
+                                try
+                                {
+                                    z = tinSurface.FindElevationAtXY(pt.X, pt.Y);
+                                }
+                                catch
+                                {
+                                    z = 0;
+                                }
+                            }
+                            boundaryPoints.Add(new Point3d(pt.X, pt.Y, z));
+                        }
+
+                        // Catchment.Create requires an explicitly closed ring (first point == last point)
+                        if (boundaryPoints.Count > 0)
+                        {
+                            var first = boundaryPoints[0];
+                            var last = boundaryPoints[boundaryPoints.Count - 1];
+                            var tolerance = new Tolerance(1e-6, 1e-6);
+                            if (!first.IsEqualTo(last, tolerance))
+                            {
+                                boundaryPoints.Add(first);
                             }
                         }
-                        else if (parms.Length == 4)
+
+                        // Get all Create methods
+                        var methods = typeof(Catchment).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                            .Where(m => m.Name == "Create").ToList();
+
+                        // Try each method signature
+                        bool created = false;
+                        foreach (var method in methods)
                         {
-                            // (String, ObjectId, ObjectId, Point3dCollection)
-                            if (parms[0].ParameterType == typeof(string) &&
-                                parms[3].ParameterType == typeof(Point3dCollection))
+                            var parms = method.GetParameters();
+
+                            try
                             {
-                                args = new object[] { name, catchmentStyleId, catchmentGroupId, boundaryPoints };
+                                object[] args = null;
+
+                                // Match parameter patterns:
+                                // (String name, ObjectId styleId, ObjectId catchmentGroupId, ObjectId surfaceId, Point3dCollection boundary)
+                                if (parms.Length == 5)
+                                {
+                                    if (parms[0].ParameterType == typeof(string) &&
+                                        parms[4].ParameterType == typeof(Point3dCollection))
+                                    {
+                                        args = new object[] { name, catchmentStyleId, catchmentGroupId, surfaceId, boundaryPoints };
+                                    }
+                                }
+                                else if (parms.Length == 4)
+                                {
+                                    // (String, ObjectId, ObjectId, Point3dCollection)
+                                    if (parms[0].ParameterType == typeof(string) &&
+                                        parms[3].ParameterType == typeof(Point3dCollection))
+                                    {
+                                        args = new object[] { name, catchmentStyleId, catchmentGroupId, boundaryPoints };
+                                    }
+                                }
+
+                                if (args != null)
+                                {
+                                    var result = method.Invoke(null, args);
+                                    if (result is ObjectId id && !id.IsNull)
+                                    {
+                                        catchmentId = id;
+                                        if (simplifyTol > 0)
+                                            _ed.WriteMessage($"    SUCCESS (simplified, tol={simplifyTol}) with {parms.Length}-param signature!\n");
+                                        else
+                                            _ed.WriteMessage($"    SUCCESS with {parms.Length}-param signature!\n");
+                                        created = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            catch (System.Exception ex)
+                            {
+                                lastError = ex.InnerException?.Message ?? ex.Message;
+                                // Log only first method failure on first tolerance attempt
+                                if (simplifyTol == 0 && methods.IndexOf(method) == 0)
+                                {
+                                    _ed.WriteMessage($"    Create failed ({parms.Length} params): {lastError}\n");
+                                }
                             }
                         }
-                        
-                        if (args != null)
+
+                        // If creation succeeded, stop trying tolerances
+                        if (created)
+                            break;
+
+                        // If error was about "simple" or "closed", try next tolerance
+                        if (lastError != null && (lastError.Contains("simple") || lastError.Contains("closed") || lastError.Contains("Boundary")))
                         {
-                            var result = method.Invoke(null, args);
-                            if (result is ObjectId id && !id.IsNull)
-                            {
-                                catchmentId = id;
-                                _ed.WriteMessage($"    SUCCESS with {parms.Length}-param signature!\n");
-                                break;
-                            }
+                            if (simplifyTol > 0)
+                                _ed.WriteMessage($"    Retrying with higher simplification tolerance ({simplifyTol})...\n");
+                            continue;
+                        }
+                        else
+                        {
+                            // Different error, don't retry
+                            break;
                         }
                     }
                     catch (System.Exception ex)
                     {
-                        // Log first failure only
-                        if (!_loggedFirstFailure)
-                        {
-                            _ed.WriteMessage($"    Create failed ({parms.Length} params): {ex.InnerException?.Message ?? ex.Message}\n");
-                            _loggedFirstFailure = true;
-                        }
+                        // Inner exception during tolerance loop
+                        _ed.WriteMessage($"    Exception during creation (tol={simplifyTol}): {ex.Message}\n");
+                        break;
                     }
                 }
                 
@@ -732,7 +813,6 @@ namespace CatchmentTool.Services
         
         private bool _printedCatchmentMethods = false;
         private bool _warnedNoGroup = false;
-        private bool _loggedFirstFailure = false;
         
         /// <summary>
         /// Try to set catchment properties using reflection.
@@ -1180,6 +1260,72 @@ namespace CatchmentTool.Services
         }
         
         #endregion
+
+        /// <summary>
+        /// Simplify polygon boundary using Douglas-Peucker to remove self-intersections.
+        /// High-resolution grid boundaries can have complex artifacts that cause "not a simple polygon" errors.
+        /// </summary>
+        private List<Point2d> SimplifyPolygonBoundary(List<Point2d> points, double tolerance = 1.0)
+        {
+            if (points.Count <= 3)
+                return points;
+
+            // Douglas-Peucker algorithm: recursively simplify by removing points that deviate less than tolerance
+            var simplified = new List<Point2d>();
+
+            // Find point with max distance from line segment between first and last
+            double maxDist = 0;
+            int maxIdx = 0;
+            var start = points[0];
+            var end = points[points.Count - 1];
+
+            for (int i = 1; i < points.Count - 1; i++)
+            {
+                double dist = PointToLineDistance(points[i], start, end);
+                if (dist > maxDist)
+                {
+                    maxDist = dist;
+                    maxIdx = i;
+                }
+            }
+
+            // If max distance exceeds tolerance, recurse on both halves
+            if (maxDist > tolerance)
+            {
+                var left = SimplifyPolygonBoundary(points.GetRange(0, maxIdx + 1), tolerance);
+                var right = SimplifyPolygonBoundary(points.GetRange(maxIdx, points.Count - maxIdx), tolerance);
+
+                left.RemoveAt(left.Count - 1); // Remove duplicate point
+                simplified.AddRange(left);
+                simplified.AddRange(right);
+            }
+            else
+            {
+                // Keep only endpoints
+                simplified.Add(start);
+                simplified.Add(end);
+            }
+
+            return simplified;
+        }
+
+        /// <summary>
+        /// Calculate perpendicular distance from point P to line segment AB.
+        /// </summary>
+        private double PointToLineDistance(Point2d p, Point2d a, Point2d b)
+        {
+            if (a.IsEqualTo(b))
+                return p.GetDistanceTo(a);
+
+            var ab = b - a;
+            var ap = p - a;
+            double abLenSq = ab.X * ab.X + ab.Y * ab.Y;
+            double t = (ap.X * ab.X + ap.Y * ab.Y) / abLenSq;
+            t = Math.Max(0, Math.Min(1, t)); // Clamp to segment
+
+            var closest = new Point2d(a.X + t * ab.X, a.Y + t * ab.Y);
+            return p.GetDistanceTo(closest);
+        }
 
         /// <summary>
         /// Create Civil 3D Catchment objects from pre-built polygon data.
