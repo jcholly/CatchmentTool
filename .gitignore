@@ -2,11 +2,15 @@
 CSharp/bin/
 CSharp/obj/
 
-# Visual Studio
+# Visual Studio & NuGet
 CSharp/.vs/
 *.user
 *.suo
 *.cache
+CSharp/*.nuget.g.props
+CSharp/*.nuget.g.targets
+CSharp/project.assets.json
+CSharp/project.nuget.cache
 
 # Distribution artifacts
 Distribution/*.zip
@@ -21,12 +25,6 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# Data folder contents (keep .gitkeep)
-Data/*
-!Data/.gitkeep
-Distribution/CatchmentTool.bundle/Contents/Data/*
-!Distribution/CatchmentTool.bundle/Contents/Data/.gitkeep
-
 # OS files
 Thumbs.db
 .DS_Store
@@ -35,9 +33,3 @@ Thumbs.db
 *.mp4
 *.avi
 *.mov
-
-# Generated test data (binary / regeneratable via generate_test_site.py)
-test_data/*.xml
-test_data/*.bil
-test_data/*.hdr
-test_data/*.dxf
