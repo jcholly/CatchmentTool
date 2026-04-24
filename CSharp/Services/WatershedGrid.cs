@@ -147,17 +147,28 @@ namespace CatchmentTool.Services
         }
 
         /// <summary>
-        /// Post-pass: assign every remaining orphan cell (inside the TIN,
-        /// label &lt; 0) to its Euclidean-nearest inlet. This fixes the
-        /// "holes in the catchment map" problem on TINs that have been
-        /// fragmented by building footprints — priority-flood can't reach
-        /// pockets disconnected from any inlet, but a designer would say
-        /// they drain to the closest inlet anyway.
+        /// Post-pass: assign every site-interior cell without a label to its
+        /// Euclidean-nearest inlet. Fills both (a) orphan inside-TIN cells
+        /// priority-flood couldn't reach, and (b) interior TIN holes
+        /// (building footprints cut out of the TIN). Water on a building
+        /// roof drains via storm piping to some inlet, so the footprint
+        /// legitimately belongs to the nearest inlet's catchment.
+        ///
+        /// Cells outside the TIN hull (the actual "sides of the surface")
+        /// stay excluded — that matches the user's rule "if it doesn't
+        /// drain somewhere, don't include it." Hull is detected by flood-
+        /// filling OffSurface cells from the grid boundary.
         /// Returns the number of cells reassigned.
         /// </summary>
         public int ResolveOrphansToNearestInlet(List<TinWalker.InletTarget> inlets)
         {
             if (inlets == null || inlets.Count == 0) return 0;
+
+            // Classify every off-surface cell as either outside-hull
+            // (reachable from grid boundary by flood-fill through off-surface
+            // cells) or interior-hole (surrounded by inside-TIN cells).
+            var outsideHull = ClassifyOutsideHull();
+
             int rescued = 0;
             for (int r = 0; r < Rows; r++)
             {
@@ -165,10 +176,7 @@ namespace CatchmentTool.Services
                 for (int c = 0; c < Cols; c++)
                 {
                     if (Labels[r, c] >= 0) continue;
-                    // Off-surface cells stay excluded (they're outside the
-                    // TIN hull and really do drain off-site).
-                    if (Resolutions[r, c] == TinWalker.Resolution.OffSurface)
-                        continue;
+                    if (outsideHull[r, c]) continue;  // drains off-site
 
                     double x = OriginX + c * _cellSize;
                     double bestD2 = double.MaxValue;
@@ -187,16 +195,63 @@ namespace CatchmentTool.Services
                     if (bestId >= 0)
                     {
                         Labels[r, c] = bestId;
+                        var prev = Resolutions[r, c];
                         Resolutions[r, c] = TinWalker.Resolution.Spillover;
                         SpilloverCells++;
-                        OrphanCells--;
-                        TracedCells++;
-                        UnresolvedCells--;
+                        if (prev == TinWalker.Resolution.Orphan)
+                        {
+                            OrphanCells--;
+                            TracedCells++;
+                            UnresolvedCells--;
+                        }
+                        else if (prev == TinWalker.Resolution.OffSurface)
+                        {
+                            OffSurfaceCells--;
+                            TracedCells++;
+                        }
                         rescued++;
                     }
                 }
             }
             return rescued;
+        }
+
+        private bool[,] ClassifyOutsideHull()
+        {
+            var outside = new bool[Rows, Cols];
+            var stack = new Stack<(int r, int c)>();
+            // Seed: off-surface cells on the grid boundary.
+            for (int c = 0; c < Cols; c++)
+            {
+                if (Resolutions[0, c] == TinWalker.Resolution.OffSurface)
+                { outside[0, c] = true; stack.Push((0, c)); }
+                if (Resolutions[Rows - 1, c] == TinWalker.Resolution.OffSurface)
+                { outside[Rows - 1, c] = true; stack.Push((Rows - 1, c)); }
+            }
+            for (int r = 0; r < Rows; r++)
+            {
+                if (Resolutions[r, 0] == TinWalker.Resolution.OffSurface)
+                { outside[r, 0] = true; stack.Push((r, 0)); }
+                if (Resolutions[r, Cols - 1] == TinWalker.Resolution.OffSurface)
+                { outside[r, Cols - 1] = true; stack.Push((r, Cols - 1)); }
+            }
+            while (stack.Count > 0)
+            {
+                var (r, c) = stack.Pop();
+                int[] dr = { -1, 1, 0, 0 };
+                int[] dc = { 0, 0, -1, 1 };
+                for (int k = 0; k < 4; k++)
+                {
+                    int nr = r + dr[k];
+                    int nc = c + dc[k];
+                    if (nr < 0 || nr >= Rows || nc < 0 || nc >= Cols) continue;
+                    if (outside[nr, nc]) continue;
+                    if (Resolutions[nr, nc] != TinWalker.Resolution.OffSurface) continue;
+                    outside[nr, nc] = true;
+                    stack.Push((nr, nc));
+                }
+            }
+            return outside;
         }
 
         /// <summary>

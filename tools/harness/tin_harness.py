@@ -595,45 +595,54 @@ def classify_off_surface(elev: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 def resolve_orphan_islands(labels: np.ndarray, elev: np.ndarray,
                            inlets: List[Inlet], outside_hull: np.ndarray,
                            origin_x: float, origin_y: float,
-                           cell_size: float
+                           cell_size: float,
+                           include_interior_holes: bool = True
                            ) -> Tuple[int, int, int]:
-    """Reassign orphan cells that belong to fully-enclosed interior islands
-    (perimeter touches only interior TIN holes, not the outer hull) to the
-    Euclidean-nearest inlet. Cells in orphan components that touch the hull
-    are left unlabelled (they drain off-site).
+    """Assign every site-interior cell that isn't labelled to its
+    Euclidean-nearest inlet.
 
-    Returns (n_components, n_assigned_cells, n_excluded_cells).
+    "Site-interior" = anything that isn't the outside-hull (exterior of
+    the TIN) — this includes both inside-TIN orphans AND interior holes
+    (buildings cut out of the TIN). Water falling on a building roof
+    ultimately drains somewhere via the storm system, so building cells
+    are legitimately part of some inlet's catchment.
+
+    Cells outside the TIN hull (the actual "sides of surfaces" case) stay
+    excluded. This is the rule the user asked for.
+
+    Returns (n_components_processed, n_assigned_cells, n_excluded_cells).
     Modifies `labels` in place.
     """
-    from scipy.ndimage import label as cc_label, binary_dilation
+    from scipy.ndimage import label as cc_label
     from scipy.spatial import cKDTree
 
-    inside = np.isfinite(elev)
-    orphan_mask = inside & (labels < 0)
-    if not orphan_mask.any():
+    rows, cols = labels.shape
+    # Everything that is NOT outside-hull and is NOT already labelled
+    # needs a catchment. That's:
+    #   - inside-TIN cells priority-flood couldn't reach (orphans)
+    #   - interior holes (buildings) if include_interior_holes is True
+    needs_label = (labels < 0) & (~outside_hull)
+    if not include_interior_holes:
+        inside = np.isfinite(elev)
+        needs_label = needs_label & inside
+    if not needs_label.any():
         return (0, 0, 0)
 
-    orphan_cc, n_cc = cc_label(orphan_mask)
+    # Count "components" for reporting.
+    _, n_cc = cc_label(needs_label)
 
     inlet_pts = np.array([[inl.x, inl.y] for inl in inlets], dtype=np.float64)
     inlet_ids = np.array([inl.id for inl in inlets], dtype=np.int64)
     tree = cKDTree(inlet_pts)
 
-    # Pragmatic rule: assign every orphan cell to its Euclidean-nearest
-    # inlet. Off-hull cells are already excluded (they're off-surface and
-    # never entered the label pool). Orphans are always interior pockets
-    # that the priority-flood couldn't reach because the TIN is fragmented.
-    # Keeping the `outside_hull` argument for future use / diagnostics.
-    _ = outside_hull
-    rs, cs = np.where(orphan_mask)
+    rs, cs = np.where(needs_label)
     xs = origin_x + cs * cell_size
     ys = origin_y + rs * cell_size
     query_pts = np.stack([xs, ys], axis=1)
     _, nearest_idx = tree.query(query_pts)
-    labels[orphan_mask] = inlet_ids[nearest_idx]
-    n_assigned = int(orphan_mask.sum())
-    n_excluded = 0
-    return (n_cc, n_assigned, n_excluded)
+    labels[needs_label] = inlet_ids[nearest_idx]
+    n_assigned = int(needs_label.sum())
+    return (n_cc, n_assigned, 0)
 
 
 def filter_small_components(labels: np.ndarray, min_cells: int
