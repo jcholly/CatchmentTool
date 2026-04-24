@@ -22,6 +22,8 @@ namespace CatchmentTool.Services
         private readonly TinSurface _surface;
         private readonly double _cellSize;
         private readonly List<TinWalker.InletTarget> _inlets;
+        private readonly IReadOnlyList<PipeBurner.PipeSegment> _pipes;
+        private readonly double _trenchDepth;
 
         public int Rows { get; private set; }
         public int Cols { get; private set; }
@@ -37,11 +39,18 @@ namespace CatchmentTool.Services
         /// <summary>Number of cells inside the TIN that are in orphan basins (no inlet reachable).</summary>
         public int OrphanCells { get; private set; }
 
-        public BasinHierarchy(TinSurface surface, List<TinWalker.InletTarget> inlets, double cellSize)
+        /// <summary>Cells lowered by pipe burning. Zero if no pipes supplied.</summary>
+        public int BurnedCells { get; private set; }
+
+        public BasinHierarchy(TinSurface surface, List<TinWalker.InletTarget> inlets, double cellSize,
+                              IReadOnlyList<PipeBurner.PipeSegment> pipes = null,
+                              double trenchDepth = 0.0)
         {
             _surface = surface;
             _inlets = inlets;
             _cellSize = cellSize;
+            _pipes = pipes;
+            _trenchDepth = trenchDepth;
         }
 
         /// <summary>
@@ -75,6 +84,16 @@ namespace CatchmentTool.Services
                     try { elev[r, c] = _surface.FindElevationAtXY(x, y); }
                     catch { elev[r, c] = double.NaN; }
                 }
+            }
+
+            // Phase 1b: burn pipes into the elev grid. On designed sites
+            // this is what keeps the lowest collector from claiming majority
+            // of the priority-flood label space via rising-water spillover.
+            BurnedCells = 0;
+            if (_pipes != null && _pipes.Count > 0)
+            {
+                BurnedCells = PipeBurner.Burn(
+                    elev, OriginX, OriginY, _cellSize, _pipes, _trenchDepth);
             }
 
             Labels = new int[Rows, Cols];
