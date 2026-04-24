@@ -25,6 +25,13 @@ __pycache__/
 venv/
 .pytest_cache/
 
+# Harness: test data and outputs
+tools/harness/testing.xml
+tools/harness/out/
+tools/harness/verify_cs/bin/
+tools/harness/verify_cs/obj/
+tools/harness/verify_cs/fixtures/
+
 # OS files
 Thumbs.db
 .DS_Store

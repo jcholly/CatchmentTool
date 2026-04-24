@@ -317,13 +317,46 @@ namespace CatchmentTool.UI
                     });
                 }
 
+                // Extract pipe segments from the network for burning into
+                // the hierarchy grid. Pipes give upstream inlets a low-elevation
+                // corridor so priority-flood respects the designed drainage
+                // instead of letting the lowest collector dominate.
+                var pipeSegments = new List<PipeBurner.PipeSegment>();
+                using (var tr = _db.TransactionManager.StartTransaction())
+                {
+                    var net = tr.GetObject(networkId, OpenMode.ForRead)
+                              as Autodesk.Civil.DatabaseServices.Network;
+                    if (net != null)
+                    {
+                        foreach (ObjectId pipeId in net.GetPipeIds())
+                        {
+                            var pipe = tr.GetObject(pipeId, OpenMode.ForRead)
+                                       as Autodesk.Civil.DatabaseServices.Pipe;
+                            if (pipe == null) continue;
+                            pipeSegments.Add(new PipeBurner.PipeSegment
+                            {
+                                StartX = pipe.StartPoint.X,
+                                StartY = pipe.StartPoint.Y,
+                                StartInvert = pipe.StartPoint.Z,
+                                EndX = pipe.EndPoint.X,
+                                EndY = pipe.EndPoint.Y,
+                                EndInvert = pipe.EndPoint.Z,
+                            });
+                        }
+                    }
+                    tr.Commit();
+                }
+
                 // Build spillover hierarchy first — priority-flood from inlets
                 // so we can resolve stuck drops via rising-water routing
                 // instead of the old nearest-inlet guess.
                 Log($"[2/5] Building spillover hierarchy (priority-flood from inlets)...");
-                var hierarchy = new BasinHierarchy(surface, walkerInlets, cellSize);
+                Log($"  Burning {pipeSegments.Count} pipes into elevation grid");
+                var hierarchy = new BasinHierarchy(
+                    surface, walkerInlets, cellSize, pipeSegments);
                 double hierarchyTime = hierarchy.Build();
                 Log($"  Grid: {hierarchy.Cols} x {hierarchy.Rows} = {hierarchy.Rows * hierarchy.Cols:N0} cells");
+                Log($"  Pipe-burned cells: {hierarchy.BurnedCells:N0}");
                 Log($"  Labelled: {hierarchy.LabelledCells:N0}  Orphan: {hierarchy.OrphanCells:N0}");
                 Log($"  Time: {hierarchyTime:F1} seconds", Brushes.LightGreen);
                 Log("");
