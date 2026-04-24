@@ -147,9 +147,146 @@ namespace CatchmentTool.Services
         }
 
         /// <summary>
+        /// Post-pass: assign every remaining orphan cell (inside the TIN,
+        /// label &lt; 0) to its Euclidean-nearest inlet. This fixes the
+        /// "holes in the catchment map" problem on TINs that have been
+        /// fragmented by building footprints — priority-flood can't reach
+        /// pockets disconnected from any inlet, but a designer would say
+        /// they drain to the closest inlet anyway.
+        /// Returns the number of cells reassigned.
+        /// </summary>
+        public int ResolveOrphansToNearestInlet(List<TinWalker.InletTarget> inlets)
+        {
+            if (inlets == null || inlets.Count == 0) return 0;
+            int rescued = 0;
+            for (int r = 0; r < Rows; r++)
+            {
+                double y = OriginY + r * _cellSize;
+                for (int c = 0; c < Cols; c++)
+                {
+                    if (Labels[r, c] >= 0) continue;
+                    // Off-surface cells stay excluded (they're outside the
+                    // TIN hull and really do drain off-site).
+                    if (Resolutions[r, c] == TinWalker.Resolution.OffSurface)
+                        continue;
+
+                    double x = OriginX + c * _cellSize;
+                    double bestD2 = double.MaxValue;
+                    int bestId = -1;
+                    for (int i = 0; i < inlets.Count; i++)
+                    {
+                        double dx = x - inlets[i].X;
+                        double dy = y - inlets[i].Y;
+                        double d2 = dx * dx + dy * dy;
+                        if (d2 < bestD2)
+                        {
+                            bestD2 = d2;
+                            bestId = inlets[i].Id;
+                        }
+                    }
+                    if (bestId >= 0)
+                    {
+                        Labels[r, c] = bestId;
+                        Resolutions[r, c] = TinWalker.Resolution.Spillover;
+                        SpilloverCells++;
+                        OrphanCells--;
+                        TracedCells++;
+                        UnresolvedCells--;
+                        rescued++;
+                    }
+                }
+            }
+            return rescued;
+        }
+
+        /// <summary>
+        /// One boundary polygon per (inlet, connected-component) pair. When
+        /// an inlet's territory is split into disjoint pieces (common on
+        /// fragmented TINs), each piece becomes its own polygon sharing the
+        /// same InletId. Caller is responsible for mapping InletId to the
+        /// corresponding Civil 3D structure.
+        /// Components smaller than <paramref name="minCells"/> are skipped.
+        /// </summary>
+        public List<CatchmentPolygon> GetCatchmentPolygons(int minCells = 1)
+        {
+            var results = new List<CatchmentPolygon>();
+            var visited = new bool[Rows, Cols];
+
+            for (int r = 0; r < Rows; r++)
+            {
+                for (int c = 0; c < Cols; c++)
+                {
+                    if (visited[r, c]) continue;
+                    int lab = Labels[r, c];
+                    if (lab < 0) { visited[r, c] = true; continue; }
+
+                    // BFS the connected component for this label.
+                    var cells = new List<(int r, int c)>();
+                    var queue = new Queue<(int r, int c)>();
+                    queue.Enqueue((r, c));
+                    visited[r, c] = true;
+                    while (queue.Count > 0)
+                    {
+                        var (cr, cc) = queue.Dequeue();
+                        cells.Add((cr, cc));
+                        if (cr > 0 && !visited[cr - 1, cc] && Labels[cr - 1, cc] == lab)
+                        { visited[cr - 1, cc] = true; queue.Enqueue((cr - 1, cc)); }
+                        if (cr + 1 < Rows && !visited[cr + 1, cc] && Labels[cr + 1, cc] == lab)
+                        { visited[cr + 1, cc] = true; queue.Enqueue((cr + 1, cc)); }
+                        if (cc > 0 && !visited[cr, cc - 1] && Labels[cr, cc - 1] == lab)
+                        { visited[cr, cc - 1] = true; queue.Enqueue((cr, cc - 1)); }
+                        if (cc + 1 < Cols && !visited[cr, cc + 1] && Labels[cr, cc + 1] == lab)
+                        { visited[cr, cc + 1] = true; queue.Enqueue((cr, cc + 1)); }
+                    }
+
+                    if (cells.Count < minCells) continue;
+
+                    var ring = TraceComponentBoundary(cells, lab);
+                    if (ring.Count < 3) continue;
+
+                    results.Add(new CatchmentPolygon
+                    {
+                        InletId = lab,
+                        CellCount = cells.Count,
+                        Ring = ring,
+                    });
+                }
+            }
+            return results;
+        }
+
+        private List<Point2d> TraceComponentBoundary(
+            List<(int r, int c)> cells, int label)
+        {
+            var edges = new List<(Point2d a, Point2d b)>();
+            foreach (var (r, c) in cells)
+            {
+                double x0 = OriginX + c * _cellSize;
+                double y0 = OriginY + r * _cellSize;
+                double x1 = x0 + _cellSize;
+                double y1 = y0 + _cellSize;
+                var bl = new Point2d(x0, y0);
+                var br = new Point2d(x1, y0);
+                var tl = new Point2d(x0, y1);
+                var tr = new Point2d(x1, y1);
+                if (r == 0 || Labels[r - 1, c] != label)
+                    edges.Add((bl, br));
+                if (r == Rows - 1 || Labels[r + 1, c] != label)
+                    edges.Add((tl, tr));
+                if (c == 0 || Labels[r, c - 1] != label)
+                    edges.Add((bl, tl));
+                if (c == Cols - 1 || Labels[r, c + 1] != label)
+                    edges.Add((br, tr));
+            }
+            return ChainEdges(edges);
+        }
+
+        /// <summary>
         /// Convert the label grid into catchment polygons using edge tracing.
         /// Adjacent catchments share exactly the same edge coordinates,
         /// guaranteeing snapped boundaries with no gaps or overlaps.
+        /// Kept for back-compat; prefer GetCatchmentPolygons which supports
+        /// multiple disjoint components per inlet.
         /// </summary>
         public Dictionary<int, List<Point2d>> GetCatchmentBoundaries()
         {
@@ -333,5 +470,100 @@ namespace CatchmentTool.Services
             }
             return Math.Abs(area) / 2.0;
         }
+
+        /// <summary>
+        /// Merge connected components smaller than <paramref name="minCells"/>
+        /// into the dominant neighbor label. Preserves full tessellation
+        /// (no cells set to -1). Repeats until stable, capped at 5 passes.
+        /// Returns number of small fragments merged away.
+        /// </summary>
+        public int MergeSmallComponents(int minCells)
+        {
+            if (minCells <= 1) return 0;
+            int totalMerged = 0;
+            for (int pass = 0; pass < 5; pass++)
+            {
+                bool changed = false;
+                var visited = new bool[Rows, Cols];
+                for (int r = 0; r < Rows; r++)
+                {
+                    for (int c = 0; c < Cols; c++)
+                    {
+                        if (visited[r, c]) continue;
+                        int lab = Labels[r, c];
+                        if (lab < 0) { visited[r, c] = true; continue; }
+
+                        var cells = new List<(int r, int c)>();
+                        var queue = new Queue<(int r, int c)>();
+                        queue.Enqueue((r, c));
+                        visited[r, c] = true;
+                        while (queue.Count > 0)
+                        {
+                            var (cr, cc) = queue.Dequeue();
+                            cells.Add((cr, cc));
+                            if (cr > 0 && !visited[cr - 1, cc] && Labels[cr - 1, cc] == lab)
+                            { visited[cr - 1, cc] = true; queue.Enqueue((cr - 1, cc)); }
+                            if (cr + 1 < Rows && !visited[cr + 1, cc] && Labels[cr + 1, cc] == lab)
+                            { visited[cr + 1, cc] = true; queue.Enqueue((cr + 1, cc)); }
+                            if (cc > 0 && !visited[cr, cc - 1] && Labels[cr, cc - 1] == lab)
+                            { visited[cr, cc - 1] = true; queue.Enqueue((cr, cc - 1)); }
+                            if (cc + 1 < Cols && !visited[cr, cc + 1] && Labels[cr, cc + 1] == lab)
+                            { visited[cr, cc + 1] = true; queue.Enqueue((cr, cc + 1)); }
+                        }
+                        if (cells.Count >= minCells) continue;
+
+                        // Find dominant neighbor label across the component perimeter.
+                        var votes = new Dictionary<int, int>();
+                        foreach (var (cr, cc) in cells)
+                        {
+                            VoteNeighbor(votes, cr - 1, cc);
+                            VoteNeighbor(votes, cr + 1, cc);
+                            VoteNeighbor(votes, cr, cc - 1);
+                            VoteNeighbor(votes, cr, cc + 1);
+                        }
+                        if (votes.Count == 0) continue;  // no labelled neighbor
+                        int newLabel = lab;
+                        int bestVotes = -1;
+                        foreach (var kv in votes)
+                        {
+                            if (kv.Value > bestVotes)
+                            {
+                                bestVotes = kv.Value;
+                                newLabel = kv.Key;
+                            }
+                        }
+                        if (newLabel != lab)
+                        {
+                            foreach (var (cr, cc) in cells)
+                                Labels[cr, cc] = newLabel;
+                            totalMerged++;
+                            changed = true;
+                        }
+                    }
+                }
+                if (!changed) break;
+            }
+            return totalMerged;
+        }
+
+        private void VoteNeighbor(Dictionary<int, int> votes, int r, int c)
+        {
+            if (r < 0 || r >= Rows || c < 0 || c >= Cols) return;
+            int lab = Labels[r, c];
+            if (lab < 0) return;
+            votes[lab] = votes.TryGetValue(lab, out int v) ? v + 1 : 1;
+        }
+    }
+
+    /// <summary>
+    /// One catchment polygon: a connected region of cells all assigned to
+    /// the same inlet. A single inlet can produce multiple polygons when
+    /// its territory is split by TIN holes or divided by ridges.
+    /// </summary>
+    public class CatchmentPolygon
+    {
+        public int InletId;
+        public int CellCount;
+        public List<Point2d> Ring;
     }
 }

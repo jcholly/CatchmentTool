@@ -27,6 +27,7 @@ venv/
 
 # Harness: test data and outputs
 tools/harness/testing.xml
+tools/harness/testing2.xml
 tools/harness/out/
 tools/harness/verify_cs/bin/
 tools/harness/verify_cs/obj/

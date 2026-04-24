@@ -219,6 +219,43 @@ namespace CatchmentTool.UI
                 return;
             }
 
+            // Cell-size safety check — warn before running a many-minute job.
+            try
+            {
+                using (var tr = _db.TransactionManager.StartTransaction())
+                {
+                    var tinSurf = tr.GetObject(surfInfo.Id, OpenMode.ForRead) as TinSurface;
+                    if (tinSurf != null)
+                    {
+                        var p = tinSurf.GetGeneralProperties();
+                        long approxCols = (long)((p.MaximumCoordinateX - p.MinimumCoordinateX) / cellSize) + 1;
+                        long approxRows = (long)((p.MaximumCoordinateY - p.MinimumCoordinateY) / cellSize) + 1;
+                        long approxCells = approxRows * approxCols;
+                        if (approxCells > 5_000_000)
+                        {
+                            double suggested = Math.Ceiling(cellSize
+                                * Math.Sqrt(approxCells / 1_000_000.0));
+                            var confirm = MessageBox.Show(
+                                $"The grid will be about {approxCells:N0} cells at cell size "
+                                + $"{cellSize:F1} {_units.UnitLabel}.\n\n"
+                                + $"This may take 30+ minutes. A cell size of "
+                                + $"about {suggested:F0} would reduce it to roughly 1M cells.\n\n"
+                                + "Continue anyway?",
+                                "Large Grid Warning",
+                                MessageBoxButton.YesNo,
+                                MessageBoxImage.Warning);
+                            if (confirm != MessageBoxResult.Yes)
+                                return;
+                        }
+                    }
+                    tr.Commit();
+                }
+            }
+            catch
+            {
+                // If we can't check, just proceed — user knows best.
+            }
+
             // Disable UI and start async work
             _isRunning = true;
             btnRun.IsEnabled = false;
@@ -387,10 +424,35 @@ namespace CatchmentTool.UI
                 Log($"  Time: {elapsed:F1} seconds", Brushes.LightGreen);
                 Log("");
 
-                // Build catchment polygons
+                // Post-processing: resolve orphan cells + merge tiny fragments.
+                // Ensures every inside-TIN cell ends up in a catchment
+                // (no holes in the map) and removes stair-step noise from
+                // cells-at-hull-edges getting cut off during flood.
+                int nRescued = grid.ResolveOrphansToNearestInlet(walkerInlets);
+                if (nRescued > 0)
+                    Log($"  Orphan cells reassigned to nearest inlet: {nRescued:N0}",
+                        Brushes.LightGreen);
+                const double MIN_CATCHMENT_SQFT = 500.0;
+                int minCells = Math.Max(1,
+                    (int)(MIN_CATCHMENT_SQFT / (cellSize * cellSize)));
+                int nMerged = grid.MergeSmallComponents(minCells);
+                if (nMerged > 0)
+                    Log($"  Small fragments merged into neighbors: {nMerged:N0} "
+                        + $"(< {MIN_CATCHMENT_SQFT:F0} sqft)");
+                // Second orphan pass — tiny isolated blobs left behind.
+                int nRescued2 = grid.ResolveOrphansToNearestInlet(walkerInlets);
+                if (nRescued2 > 0)
+                    Log($"  Orphan cells reassigned (pass 2): {nRescued2:N0}");
+                Log("");
+
+                // Build per-component catchment polygons. One inlet may own
+                // several polygons when its territory is split by buildings
+                // (TIN holes) — each fragment becomes its own catchment.
                 Log($"[4/5] Building catchment polygons...");
-                var boundaries = grid.GetCatchmentBoundaries();
-                Log($"  {boundaries.Count} catchment polygons created", Brushes.LightGreen);
+                var polygons = grid.GetCatchmentPolygons(minCells: 1);
+                Log($"  {polygons.Count} catchment polygons created "
+                    + $"(across {polygons.Select(p => p.InletId).Distinct().Count()} inlets)",
+                    Brushes.LightGreen);
                 Log("");
 
                 // Create Civil 3D catchment objects
@@ -400,19 +462,21 @@ namespace CatchmentTool.UI
                 var creator = new CatchmentCreator(_doc);
                 var polygonInfos = new List<CatchmentPolygonInfo>();
 
-                foreach (var kvp in boundaries)
+                foreach (var poly in polygons)
                 {
-                    int inletIdx = kvp.Key;
-                    if (inletIdx < 0 || inletIdx >= inlets.Count || kvp.Value.Count < 3)
+                    int inletIdx = poly.InletId;
+                    if (inletIdx < 0 || inletIdx >= inlets.Count
+                        || poly.Ring == null || poly.Ring.Count < 3)
                         continue;
 
                     var inlet = inlets[inletIdx];
-                    double area = ComputeArea(kvp.Value);
-                    Log($"  {inlet.Name}: {kvp.Value.Count} vertices, {area:N0} sq {_units.UnitLabel}");
+                    double area = ComputeArea(poly.Ring);
+                    Log($"  {inlet.Name}: {poly.Ring.Count} vertices, "
+                        + $"{area:N0} sq {_units.UnitLabel}");
 
                     polygonInfos.Add(new CatchmentPolygonInfo
                     {
-                        BoundaryPoints = kvp.Value,
+                        BoundaryPoints = poly.Ring,
                         StructureName = inlet.Name,
                         StructureObjectId = inlet.ObjectId,
                         StructureX = inlet.Position.X,

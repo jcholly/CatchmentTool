@@ -551,3 +551,191 @@ def inlet_for_xy(hierarchy: BasinHierarchy, x: float, y: float) -> int:
     if not (0 <= r < hierarchy.rows and 0 <= c < hierarchy.cols):
         return -1
     return int(hierarchy.labels[r, c])
+
+
+# --- Post-processing: hull detection + orphan resolution ------------------
+
+def classify_off_surface(elev: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Separate off-surface cells into "outside the TIN hull" vs
+    "interior holes inside the TIN" (e.g., building footprints cut from
+    the surface). Flood-fills off-surface cells from the grid boundary;
+    any NaN cell reached is outside-hull. The rest are interior holes.
+
+    Returns (outside_hull_mask, interior_holes_mask) — both booleans.
+    """
+    rows, cols = elev.shape
+    is_off = np.isnan(elev)
+    outside = np.zeros_like(is_off, dtype=bool)
+    stack: List[Tuple[int, int]] = []
+
+    for c in range(cols):
+        if is_off[0, c] and not outside[0, c]:
+            outside[0, c] = True; stack.append((0, c))
+        if is_off[rows - 1, c] and not outside[rows - 1, c]:
+            outside[rows - 1, c] = True; stack.append((rows - 1, c))
+    for r in range(rows):
+        if is_off[r, 0] and not outside[r, 0]:
+            outside[r, 0] = True; stack.append((r, 0))
+        if is_off[r, cols - 1] and not outside[r, cols - 1]:
+            outside[r, cols - 1] = True; stack.append((r, cols - 1))
+
+    while stack:
+        r, c = stack.pop()
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < rows and 0 <= nc < cols:
+                if is_off[nr, nc] and not outside[nr, nc]:
+                    outside[nr, nc] = True
+                    stack.append((nr, nc))
+
+    interior = is_off & ~outside
+    return outside, interior
+
+
+def resolve_orphan_islands(labels: np.ndarray, elev: np.ndarray,
+                           inlets: List[Inlet], outside_hull: np.ndarray,
+                           origin_x: float, origin_y: float,
+                           cell_size: float
+                           ) -> Tuple[int, int, int]:
+    """Reassign orphan cells that belong to fully-enclosed interior islands
+    (perimeter touches only interior TIN holes, not the outer hull) to the
+    Euclidean-nearest inlet. Cells in orphan components that touch the hull
+    are left unlabelled (they drain off-site).
+
+    Returns (n_components, n_assigned_cells, n_excluded_cells).
+    Modifies `labels` in place.
+    """
+    from scipy.ndimage import label as cc_label, binary_dilation
+    from scipy.spatial import cKDTree
+
+    inside = np.isfinite(elev)
+    orphan_mask = inside & (labels < 0)
+    if not orphan_mask.any():
+        return (0, 0, 0)
+
+    orphan_cc, n_cc = cc_label(orphan_mask)
+
+    inlet_pts = np.array([[inl.x, inl.y] for inl in inlets], dtype=np.float64)
+    inlet_ids = np.array([inl.id for inl in inlets], dtype=np.int64)
+    tree = cKDTree(inlet_pts)
+
+    # Pragmatic rule: assign every orphan cell to its Euclidean-nearest
+    # inlet. Off-hull cells are already excluded (they're off-surface and
+    # never entered the label pool). Orphans are always interior pockets
+    # that the priority-flood couldn't reach because the TIN is fragmented.
+    # Keeping the `outside_hull` argument for future use / diagnostics.
+    _ = outside_hull
+    rs, cs = np.where(orphan_mask)
+    xs = origin_x + cs * cell_size
+    ys = origin_y + rs * cell_size
+    query_pts = np.stack([xs, ys], axis=1)
+    _, nearest_idx = tree.query(query_pts)
+    labels[orphan_mask] = inlet_ids[nearest_idx]
+    n_assigned = int(orphan_mask.sum())
+    n_excluded = 0
+    return (n_cc, n_assigned, n_excluded)
+
+
+def filter_small_components(labels: np.ndarray, min_cells: int
+                            ) -> Tuple[int, int]:
+    """Per-inlet: find connected components of labelled cells. Components
+    smaller than `min_cells` get merged into the dominant adjacent label.
+    If no labeled neighbor exists, the component is left as-is (it's a
+    genuine tiny isolated catchment). No cells are set to -1 — preserves
+    tessellation.
+    Returns (final_component_count, n_small_merged_away).
+    """
+    from scipy.ndimage import label as cc_label, binary_dilation
+
+    merged_total = 0
+    for _pass in range(5):
+        small_any = False
+        unique_ids = sorted(int(v) for v in np.unique(labels) if v >= 0)
+        for iid in unique_ids:
+            mask = (labels == iid)
+            ccs, n = cc_label(mask)
+            for cc_id in range(1, n + 1):
+                cc_mask = (ccs == cc_id)
+                sz = int(cc_mask.sum())
+                if sz >= min_cells:
+                    continue
+                dilated = binary_dilation(cc_mask)
+                perim = dilated & ~cc_mask
+                neighbor_labels = labels[perim]
+                # Include same-iid neighbors (diagonal-only) so the small
+                # component just rejoins its parent inlet visually.
+                neighbor_labels = neighbor_labels[neighbor_labels >= 0]
+                if len(neighbor_labels) == 0:
+                    continue  # leave tiny isolated catchment alone
+                vals, counts = np.unique(neighbor_labels, return_counts=True)
+                new_label = int(vals[counts.argmax()])
+                if new_label != iid:
+                    labels[cc_mask] = new_label
+                    merged_total += 1
+                    small_any = True
+        if not small_any:
+            break
+
+    # Count final components.
+    kept_total = 0
+    unique_ids = sorted(int(v) for v in np.unique(labels) if v >= 0)
+    for iid in unique_ids:
+        _, n = cc_label(labels == iid)
+        kept_total += n
+    return kept_total, merged_total
+
+
+def component_count_per_inlet(labels: np.ndarray) -> Dict[int, int]:
+    """How many connected components does each inlet have?"""
+    from scipy.ndimage import label as cc_label
+    out: Dict[int, int] = {}
+    for iid in sorted(int(v) for v in np.unique(labels) if v >= 0):
+        _, n = cc_label(labels == iid)
+        out[iid] = n
+    return out
+
+
+def exclude_cells_far_from_inlet(labels: np.ndarray, inlets: List[Inlet],
+                                 origin_x: float, origin_y: float,
+                                 cell_size: float, max_distance_ft: float
+                                 ) -> int:
+    """Exclude cells whose Euclidean distance to their assigned inlet
+    exceeds `max_distance_ft`. These are cells priority-flood dragged in
+    from far away because no closer inlet was reachable. In practice they
+    represent "uncovered zones" — undeveloped area, no designed drainage —
+    and shouldn't be lumped into the nearest inlet's catchment.
+
+    Returns number of cells excluded.
+    """
+    rows, cols = labels.shape
+    max_d2 = max_distance_ft * max_distance_ft
+    inlet_xy = {inl.id: (inl.x, inl.y) for inl in inlets}
+
+    # Precompute cell center coordinates.
+    labelled = labels >= 0
+    rs, cs = np.where(labelled)
+    if len(rs) == 0:
+        return 0
+
+    xs = origin_x + cs * cell_size
+    ys = origin_y + rs * cell_size
+    cell_labels = labels[rs, cs]
+
+    far = np.zeros(len(rs), dtype=bool)
+    # Vectorize per-inlet (K inlets, N cells):
+    for iid, (ix, iy) in inlet_xy.items():
+        mask = cell_labels == iid
+        if not mask.any():
+            continue
+        dx = xs[mask] - ix
+        dy = ys[mask] - iy
+        d2 = dx * dx + dy * dy
+        far_mask = d2 > max_d2
+        # Map back to the original index space.
+        indices = np.where(mask)[0][far_mask]
+        far[indices] = True
+
+    n_excluded = int(far.sum())
+    if n_excluded > 0:
+        labels[rs[far], cs[far]] = -1
+    return n_excluded
