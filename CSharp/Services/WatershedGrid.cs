@@ -23,9 +23,18 @@ namespace CatchmentTool.Services
         public double OriginY { get; private set; }
         public int[,] Labels { get; private set; }
 
+        /// <summary>Per-cell record of how each label was decided.</summary>
+        public TinWalker.Resolution[,] Resolutions { get; private set; }
+
         public int TotalCells => Rows * Cols;
         public int TracedCells { get; private set; }
         public int UnresolvedCells { get; private set; }
+
+        // Breakdown by resolution type (Phase 1 telemetry).
+        public int DirectCells { get; private set; }
+        public int SpilloverCells { get; private set; }
+        public int OffSurfaceCells { get; private set; }
+        public int OrphanCells { get; private set; }
 
         /// <param name="surface">Civil 3D TIN surface</param>
         /// <param name="walker">Configured TinWalker with inlets</param>
@@ -42,7 +51,13 @@ namespace CatchmentTool.Services
         /// Returns elapsed time in seconds.
         /// </summary>
         /// <param name="progress">Optional callback: (cellsCompleted, totalCells)</param>
-        public double Build(Action<int, int> progress = null)
+        /// <param name="hierarchy">
+        /// Optional spillover map. When provided, cells where the walker
+        /// gets stuck or goes off-surface are resolved via rising-water
+        /// routing instead of falling through unassigned. Strongly
+        /// recommended for small sites with micro-sinks.
+        /// </param>
+        public double Build(Action<int, int> progress = null, BasinHierarchy hierarchy = null)
         {
             var props = _surface.GetGeneralProperties();
             double minX = props.MinimumCoordinateX;
@@ -61,8 +76,13 @@ namespace CatchmentTool.Services
             Rows = Math.Max(1, (int)(extentY / _cellSize) + 1);
 
             Labels = new int[Rows, Cols];
+            Resolutions = new TinWalker.Resolution[Rows, Cols];
             TracedCells = 0;
             UnresolvedCells = 0;
+            DirectCells = 0;
+            SpilloverCells = 0;
+            OffSurfaceCells = 0;
+            OrphanCells = 0;
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             int total = Rows * Cols;
@@ -82,16 +102,40 @@ namespace CatchmentTool.Services
                     catch
                     {
                         Labels[r, c] = -1;
+                        Resolutions[r, c] = TinWalker.Resolution.OffSurface;
                         continue;
                     }
 
                     var result = _walker.Trace(x, y);
-                    Labels[r, c] = result.InletId;
+                    int label = result.InletId;
+                    var resolution = result.HowResolved;
 
-                    if (result.InletId >= 0)
-                        TracedCells++;
-                    else
-                        UnresolvedCells++;
+                    // Walker gave us Direct / OffSurface / Orphan. For the
+                    // last two, consult the spillover hierarchy: "if water
+                    // rose high enough, where does this cell drain?"
+                    if (label < 0 && hierarchy != null)
+                    {
+                        int spillInlet = hierarchy.GetInletForXY(x, y);
+                        if (spillInlet >= 0)
+                        {
+                            label = spillInlet;
+                            resolution = TinWalker.Resolution.Spillover;
+                        }
+                    }
+
+                    Labels[r, c] = label;
+                    Resolutions[r, c] = resolution;
+
+                    if (label >= 0) TracedCells++;
+                    else UnresolvedCells++;
+
+                    switch (resolution)
+                    {
+                        case TinWalker.Resolution.Direct:      DirectCells++;     break;
+                        case TinWalker.Resolution.Spillover:   SpilloverCells++;  break;
+                        case TinWalker.Resolution.OffSurface:  OffSurfaceCells++; break;
+                        case TinWalker.Resolution.Orphan:      OrphanCells++;     break;
+                    }
 
                     if (progress != null && (TracedCells + UnresolvedCells) % 1000 == 0)
                         progress(TracedCells + UnresolvedCells, total);

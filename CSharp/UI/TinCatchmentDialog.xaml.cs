@@ -274,7 +274,7 @@ namespace CatchmentTool.UI
                 }
 
                 // Extract inlet structures (only selected ones)
-                Log($"[1/4] Extracting {selectedStructures.Count} inlet structures...");
+                Log($"[1/5] Extracting {selectedStructures.Count} inlet structures...");
                 var inlets = new List<StructureData>();
                 using (var tr = _db.TransactionManager.StartTransaction())
                 {
@@ -317,8 +317,19 @@ namespace CatchmentTool.UI
                     });
                 }
 
-                // Build watershed grid
-                Log($"[2/4] Tracing flow across TIN surface...");
+                // Build spillover hierarchy first — priority-flood from inlets
+                // so we can resolve stuck drops via rising-water routing
+                // instead of the old nearest-inlet guess.
+                Log($"[2/5] Building spillover hierarchy (priority-flood from inlets)...");
+                var hierarchy = new BasinHierarchy(surface, walkerInlets, cellSize);
+                double hierarchyTime = hierarchy.Build();
+                Log($"  Grid: {hierarchy.Cols} x {hierarchy.Rows} = {hierarchy.Rows * hierarchy.Cols:N0} cells");
+                Log($"  Labelled: {hierarchy.LabelledCells:N0}  Orphan: {hierarchy.OrphanCells:N0}");
+                Log($"  Time: {hierarchyTime:F1} seconds", Brushes.LightGreen);
+                Log("");
+
+                // Build watershed grid (now with spillover fallback)
+                Log($"[3/5] Tracing flow across TIN surface...");
                 Log($"  Cell size: {cellSize:F1} {_units.UnitLabel}, Snap tolerance: {snapTolerance:F1} {_units.UnitLabel}");
                 var walker = new TinWalker(surface, walkerInlets, snapTolerance);
                 var grid = new WatershedGrid(surface, walker, cellSize);
@@ -333,21 +344,31 @@ namespace CatchmentTool.UI
                         SetProgress(newProgress, $"{done:N0} / {total:N0} cells");
                         prevProgress = newProgress;
                     }
-                });
+                }, hierarchy);
 
+                int resolved = grid.DirectCells + grid.SpilloverCells;
+                double pctDirect    = resolved == 0 ? 0 : 100.0 * grid.DirectCells / resolved;
+                double pctSpillover = resolved == 0 ? 0 : 100.0 * grid.SpilloverCells / resolved;
                 Log($"  Grid: {grid.Cols} x {grid.Rows} = {grid.TotalCells:N0} cells");
-                Log($"  Traced: {grid.TracedCells:N0} cells to inlets");
+                Log($"  Resolved to inlets: {resolved:N0}");
+                Log($"    Direct (walker arrived)   : {grid.DirectCells:N0}  ({pctDirect:F1}%)", Brushes.LightGreen);
+                Log($"    Spillover (rising water)  : {grid.SpilloverCells:N0}  ({pctSpillover:F1}%)",
+                    grid.SpilloverCells > resolved * 0.3 ? Brushes.Orange : Brushes.LightGreen);
+                if (grid.OffSurfaceCells > 0)
+                    Log($"    Off-surface              : {grid.OffSurfaceCells:N0}", Brushes.Orange);
+                if (grid.OrphanCells > 0)
+                    Log($"    Orphan (no inlet reach)  : {grid.OrphanCells:N0}", Brushes.Red);
                 Log($"  Time: {elapsed:F1} seconds", Brushes.LightGreen);
                 Log("");
 
                 // Build catchment polygons
-                Log($"[3/4] Building catchment polygons...");
+                Log($"[4/5] Building catchment polygons...");
                 var boundaries = grid.GetCatchmentBoundaries();
                 Log($"  {boundaries.Count} catchment polygons created", Brushes.LightGreen);
                 Log("");
 
                 // Create Civil 3D catchment objects
-                Log($"[4/4] Creating Civil 3D Catchment objects...");
+                Log($"[5/5] Creating Civil 3D Catchment objects...");
                 SetProgress(90, "Creating catchments...");
 
                 var creator = new CatchmentCreator(_doc);

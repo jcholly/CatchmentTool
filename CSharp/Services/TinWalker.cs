@@ -26,12 +26,22 @@ namespace CatchmentTool.Services
             public string Name;
         }
 
+        public enum Resolution
+        {
+            Direct,      // Walker physically arrived at an inlet via steepest descent
+            Spillover,   // Walker got stuck; resolved via BasinHierarchy (rising-water fill)
+            OffSurface,  // Walker left the TIN boundary; assigned by fallback
+            Orphan       // No inlet reachable even via spillover
+        }
+
         public struct TraceResult
         {
-            public int InletId;      // -1 if unresolved
+            public int InletId;                 // -1 if unresolved
             public int StepCount;
             public double FinalX;
             public double FinalY;
+            public Resolution HowResolved;      // Why/how this drop was assigned
+            public List<Point2d> Path;          // Non-null only when capturePath=true
         }
 
         /// <param name="surface">The TIN surface to walk on</param>
@@ -48,19 +58,28 @@ namespace CatchmentTool.Services
         }
 
         /// <summary>
-        /// Trace a single water drop from (startX, startY) downhill to an inlet.
-        /// Returns the inlet ID it reaches, or -1 if it dead-ends.
+        /// Trace a single water drop from (startX, startY) downhill.
+        /// Returns Resolution=Direct when the walker physically reaches an inlet;
+        /// Resolution=OffSurface / Orphan when it leaves the surface or stalls
+        /// (caller is expected to consult a BasinHierarchy for final assignment).
+        /// When capturePath=true the full (x,y) trail is stored in TraceResult.Path.
         /// </summary>
-        public TraceResult Trace(double startX, double startY)
+        public TraceResult Trace(double startX, double startY, bool capturePath = false)
         {
             double cx = startX, cy = startY;
+            List<Point2d> path = capturePath ? new List<Point2d> { new Point2d(cx, cy) } : null;
 
             for (int step = 0; step < _maxSteps; step++)
             {
                 // Check if we've arrived at an inlet
                 int nearInlet = FindNearestInlet(cx, cy);
                 if (nearInlet >= 0)
-                    return new TraceResult { InletId = nearInlet, StepCount = step, FinalX = cx, FinalY = cy };
+                    return new TraceResult
+                    {
+                        InletId = nearInlet, StepCount = step,
+                        FinalX = cx, FinalY = cy,
+                        HowResolved = Resolution.Direct, Path = path
+                    };
 
                 // Find the triangle at current position
                 TinSurfaceTriangle tri;
@@ -70,12 +89,11 @@ namespace CatchmentTool.Services
                 }
                 catch
                 {
-                    // Off the surface — assign to nearest inlet
-                    return ResolveOffSurface(cx, cy, step);
+                    return ResolveOffSurface(cx, cy, step, path);
                 }
 
                 if (tri == null)
-                    return ResolveOffSurface(cx, cy, step);
+                    return ResolveOffSurface(cx, cy, step, path);
 
                 // Get triangle vertices
                 var p1 = tri.Vertex1.Location;
@@ -88,7 +106,7 @@ namespace CatchmentTool.Services
                 // Flat triangle — local minimum
                 double gradMag = Math.Sqrt(dx * dx + dy * dy);
                 if (gradMag < 1e-10)
-                    return ResolveStuck(cx, cy, step);
+                    return ResolveStuck(cx, cy, step, path);
 
                 // Normalize and step. Step size = distance to farthest edge
                 // of the triangle to ensure we cross into the next one.
@@ -108,7 +126,7 @@ namespace CatchmentTool.Services
                 }
                 catch
                 {
-                    return ResolveOffSurface(cx, cy, step);
+                    return ResolveOffSurface(cx, cy, step, path);
                 }
 
                 if (newZ >= curZ - 1e-6)
@@ -123,19 +141,20 @@ namespace CatchmentTool.Services
                     }
                     catch
                     {
-                        return ResolveStuck(cx, cy, step);
+                        return ResolveStuck(cx, cy, step, path);
                     }
 
                     if (newZ >= curZ - 1e-6)
-                        return ResolveStuck(cx, cy, step);
+                        return ResolveStuck(cx, cy, step, path);
                 }
 
                 cx = newX;
                 cy = newY;
+                path?.Add(new Point2d(cx, cy));
             }
 
             // Max steps exceeded
-            return ResolveStuck(cx, cy, _maxSteps);
+            return ResolveStuck(cx, cy, _maxSteps, path);
         }
 
         /// <summary>
@@ -205,35 +224,31 @@ namespace CatchmentTool.Services
             return bestId;
         }
 
-        private TraceResult ResolveOffSurface(double x, double y, int steps)
+        private TraceResult ResolveOffSurface(double x, double y, int steps, List<Point2d> path)
         {
-            int nearest = FindNearestInletUnlimited(x, y);
-            return new TraceResult { InletId = nearest, StepCount = steps, FinalX = x, FinalY = y };
-        }
-
-        private TraceResult ResolveStuck(double x, double y, int steps)
-        {
-            // At a local minimum that's not an inlet — assign to nearest inlet
-            int nearest = FindNearestInletUnlimited(x, y);
-            return new TraceResult { InletId = nearest, StepCount = steps, FinalX = x, FinalY = y };
-        }
-
-        private int FindNearestInletUnlimited(double x, double y)
-        {
-            double bestDist = double.MaxValue;
-            int bestId = -1;
-            for (int i = 0; i < _inlets.Count; i++)
+            // Walker left the TIN boundary. Leave InletId unresolved; the
+            // caller (WatershedGrid) will consult BasinHierarchy for final
+            // assignment. If no hierarchy is available, downstream code may
+            // fall back to nearest-inlet — but that decision is not made here.
+            return new TraceResult
             {
-                double dx = x - _inlets[i].X;
-                double dy = y - _inlets[i].Y;
-                double d = dx * dx + dy * dy;
-                if (d < bestDist)
-                {
-                    bestDist = d;
-                    bestId = _inlets[i].Id;
-                }
-            }
-            return bestId;
+                InletId = -1, StepCount = steps,
+                FinalX = x, FinalY = y,
+                HowResolved = Resolution.OffSurface, Path = path
+            };
+        }
+
+        private TraceResult ResolveStuck(double x, double y, int steps, List<Point2d> path)
+        {
+            // At a local minimum (flat triangle, sink, or could-not-descend).
+            // Do NOT guess nearest inlet — the whole point of Phase 1 is to
+            // let BasinHierarchy compute where rising water would spill to.
+            return new TraceResult
+            {
+                InletId = -1, StepCount = steps,
+                FinalX = x, FinalY = y,
+                HowResolved = Resolution.Orphan, Path = path
+            };
         }
     }
 }
