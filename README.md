@@ -23,6 +23,22 @@ Three commands cover the full storm drainage catchment workflow:
 6. Civil 3D Catchment objects are created, each linked to its inlet structure
 7. **Best for:** small to medium sites with a single TIN surface and designed drainage
 
+#### How CATCHMENTTIN resolves stuck drops (spillover routing)
+
+Every grid cell is a virtual water drop that walks steepest descent on the TIN. When a drop cannot physically reach an inlet (flat triangle, micro-sink, off-surface), `CATCHMENTTIN` no longer falls back to nearest-inlet guessing. Instead, a **priority-flood from the inlets** (Barnes, Lehman & Mulla 2014) precomputes, for every cell on the surface, the inlet that rising water would spill toward. Stuck drops are resolved via this hierarchy — topologically correct, independent of distance.
+
+The dialog log reports a resolution breakdown so you can judge the answer's quality:
+
+```
+Resolved to inlets: 248,113
+  Direct (walker arrived)   : 231,440  (93.3%)
+  Spillover (rising water)  :  15,889  ( 6.4%)
+  Off-surface               :     612
+  Orphan (no inlet reach)   :     172
+```
+
+A high spillover share (>30%) or non-zero orphan count indicates micro-sinks, missing inlets, or the need for pipe burning — planned in a later phase.
+
 ### Workflow B — Automated with WhiteboxTools (complex hydrology)
 1. Type `CATCHMENTAUTO`
 2. Select surface and pipe network in the dialog
@@ -48,6 +64,7 @@ CatchmentTool/
 │   │   └── TinCatchmentCommand.cs   # CATCHMENTTIN
 │   ├── Services/
 │   │   ├── TinWalker.cs             # Steepest descent tracer on TIN
+│   │   ├── BasinHierarchy.cs        # Priority-flood spillover routing
 │   │   ├── WatershedGrid.cs         # Regular grid + flow tracing
 │   │   ├── SurfaceExporter.cs       # TIN surface → DEM raster
 │   │   ├── StructureExtractor.cs    # Pipe network → inlet points
@@ -65,7 +82,6 @@ CatchmentTool/
 │   └── requirements.txt
 ├── Distribution/                    # Packaging and installation
 │   └── CatchmentTool.bundle/        # AutoCAD ApplicationPlugins bundle
-├── Build-Distribution.ps1           # Build + install script
 └── INSTALL.md
 ```
 
@@ -81,14 +97,15 @@ pip install -r Python/requirements.txt
 ## Installation
 
 ```powershell
-# Build and install to ApplicationPlugins
-.\Build-Distribution.ps1 -Install
+# Build the C# plugin (needs Civil 3D 2026 installed)
+dotnet build CSharp/CatchmentTool.csproj -c Release
 
-# Python-only update (no Civil 3D restart needed)
-.\Build-Distribution.ps1 -Install -SkipBuild
+# Copy the bundle to ApplicationPlugins
+Copy-Item -Recurse -Force Distribution\CatchmentTool.bundle `
+    "$env:ProgramData\Autodesk\ApplicationPlugins\"
 ```
 
-See [INSTALL.md](INSTALL.md) for detailed setup.
+See [INSTALL.md](INSTALL.md) for release-ZIP install, Python setup, and troubleshooting.
 
 ## License
 

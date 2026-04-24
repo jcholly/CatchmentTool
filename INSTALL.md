@@ -27,22 +27,19 @@ cd CatchmentTool
 # Install Python dependencies
 pip install -r Python/requirements.txt
 
-# Build C# plugin and install to ApplicationPlugins
-.\Build-Distribution.ps1 -Install
+# Build the C# plugin
+dotnet build CSharp/CatchmentTool.csproj -c Release
+
+# Copy the build output + Python scripts to ApplicationPlugins
+# (adjust paths for your Civil 3D install)
+Copy-Item -Recurse -Force Distribution\CatchmentTool.bundle `
+    "$env:ProgramData\Autodesk\ApplicationPlugins\"
 ```
 
 > **Note:** The C# build requires Civil 3D 2026 DLLs. If Civil 3D is not at the default path, set the environment variable `CIVIL3D_PATH` or pass it directly:
 > ```powershell
 > dotnet build CSharp/CatchmentTool.csproj -c Release -p:Civil3DPath="D:\Your\Civil3D\Path"
 > ```
-
-### Updating Python-only changes
-
-If you only changed Python files (no C# changes), you can redeploy without restarting Civil 3D:
-
-```powershell
-.\Build-Distribution.ps1 -Install -SkipBuild
-```
 
 ---
 
@@ -77,8 +74,9 @@ pip install geopandas shapely whitebox numpy pyproj
 
 | Command | Description |
 |---------|-------------|
-| `CATCHMENTAUTO` | Opens a dialog to automatically delineate catchments from a surface and pipe network using WhiteboxTools |
-| `MAKECATCHMENTS` | Select existing closed polylines and convert them to Civil 3D Catchment objects with outlet structures assigned |
+| `CATCHMENTTIN` | TIN-native delineation: steepest descent from every grid cell, with priority-flood spillover routing for drops stuck in micro-sinks. Fast, topologically correct for designed small sites. |
+| `CATCHMENTAUTO` | Raster delineation via WhiteboxTools (D8 flow accumulation). Best for larger sites or complex hydrology; requires Python. |
+| `MAKECATCHMENTS` | Select existing closed polylines and convert them to Civil 3D Catchment objects with outlet structures assigned. |
 
 ---
 
