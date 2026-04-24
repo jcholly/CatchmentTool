@@ -136,17 +136,20 @@ namespace CatchmentTool.UI
                             {
                                 var structure = tr.GetObject(id, OpenMode.ForRead)
                                                 as Autodesk.Civil.DatabaseServices.Structure;
-                                if (structure != null)
+                                if (structure == null) continue;
+
+                                string partFamily;
+                                try { partFamily = structure.PartFamilyName ?? "Unknown"; }
+                                catch { partFamily = "Unknown"; }
+
+                                _structures.Add(new StructureItem
                                 {
-                                    _structures.Add(new StructureItem
-                                    {
-                                        ObjectId = id,
-                                        Name = structure.Name,
-                                        PartFamilyName = structure.PartFamilyName ?? "Unknown",
-                                        NetworkName = netName,
-                                        DisplayName = $"{structure.Name} ({structure.PartFamilyName ?? "Structure"})"
-                                    });
-                                }
+                                    ObjectId = id,
+                                    Name = structure.Name,
+                                    PartFamilyName = partFamily,
+                                    NetworkName = netName,
+                                    DisplayName = $"{structure.Name} ({partFamily})"
+                                });
                             }
                         }
                         catch (Exception ex)
