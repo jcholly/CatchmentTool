@@ -28,6 +28,7 @@ namespace CatchmentTool.UI
         public ObjectId ObjectId { get; set; }
         public string Name { get; set; }
         public string PartFamilyName { get; set; }
+        public string NetworkName { get; set; }
         public string DisplayName { get; set; }
 
         private bool _isSelected = true;
@@ -49,7 +50,7 @@ namespace CatchmentTool.UI
         private Editor _ed;
         private bool _isRunning = false;
         private List<SurfaceInfo> _surfaces;
-        private List<NetworkInfo> _networks;
+        private List<ObjectId> _networkIds;
         private ObservableCollection<StructureItem> _structures;
         private DrawingUnits _units;
 
@@ -60,6 +61,7 @@ namespace CatchmentTool.UI
             _db = doc.Database;
             _ed = doc.Editor;
             _structures = new ObservableCollection<StructureItem>();
+            _networkIds = new List<ObjectId>();
 
             _units = DrawingUnits.Detect(doc);
 
@@ -73,9 +75,8 @@ namespace CatchmentTool.UI
             Log("╚═══════════════════════════════════════╝", Brushes.Cyan);
             Log("");
 
-            // Load TIN surfaces only
             LoadTinSurfaces();
-            LoadNetworks();
+            LoadAllStructures();
         }
 
         private void LoadTinSurfaces()
@@ -107,9 +108,11 @@ namespace CatchmentTool.UI
             if (_surfaces.Count > 0) cmbSurface.SelectedIndex = 0;
         }
 
-        private void LoadNetworks()
+        private void LoadAllStructures()
         {
-            _networks = new List<NetworkInfo>();
+            _structures.Clear();
+            _networkIds.Clear();
+
             try
             {
                 var civilDoc = CivilApplication.ActiveDocument;
@@ -117,72 +120,46 @@ namespace CatchmentTool.UI
 
                 using (var tr = _db.TransactionManager.StartTransaction())
                 {
-                    foreach (ObjectId id in networkIds)
+                    foreach (ObjectId netId in networkIds)
                     {
-                        var network = tr.GetObject(id, OpenMode.ForRead) as Autodesk.Civil.DatabaseServices.Network;
-                        if (network != null)
+                        var network = tr.GetObject(netId, OpenMode.ForRead)
+                                      as Autodesk.Civil.DatabaseServices.Network;
+                        if (network == null) continue;
+
+                        _networkIds.Add(netId);
+                        string netName = network.Name;
+
+                        try
                         {
-                            _networks.Add(new NetworkInfo
+                            var structureIds = network.GetStructureIds();
+                            foreach (ObjectId id in structureIds)
                             {
-                                Id = id,
-                                Name = network.Name,
-                                DisplayName = network.Name
-                            });
+                                var structure = tr.GetObject(id, OpenMode.ForRead)
+                                                as Autodesk.Civil.DatabaseServices.Structure;
+                                if (structure != null)
+                                {
+                                    _structures.Add(new StructureItem
+                                    {
+                                        ObjectId = id,
+                                        Name = structure.Name,
+                                        PartFamilyName = structure.PartFamilyName ?? "Unknown",
+                                        NetworkName = netName,
+                                        DisplayName = $"{structure.Name} ({structure.PartFamilyName ?? "Structure"})"
+                                    });
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log($"Warning: could not load structures from {netName}: {ex.Message}", Brushes.Yellow);
                         }
                     }
-                    tr.Commit();
-                }
-            }
-            catch { /* no pipe networks in drawing, leave list empty */ }
-
-            cmbNetwork.ItemsSource = _networks;
-            cmbNetwork.DisplayMemberPath = "DisplayName";
-            if (_networks.Count > 0) cmbNetwork.SelectedIndex = 0;
-        }
-
-        private void CmbNetwork_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            PopulateStructureList();
-        }
-
-        private void PopulateStructureList()
-        {
-            _structures.Clear();
-
-            if (!(cmbNetwork.SelectedItem is NetworkInfo networkInfo))
-                return;
-
-            try
-            {
-                using (var tr = _db.TransactionManager.StartTransaction())
-                {
-                    var network = tr.GetObject(networkInfo.Id, OpenMode.ForRead)
-                                  as Autodesk.Civil.DatabaseServices.Network;
-                    if (network == null) { tr.Commit(); return; }
-
-                    var structureIds = network.GetStructureIds();
-                    foreach (ObjectId id in structureIds)
-                    {
-                        var structure = tr.GetObject(id, OpenMode.ForRead)
-                                        as Autodesk.Civil.DatabaseServices.Structure;
-                        if (structure != null)
-                        {
-                            _structures.Add(new StructureItem
-                            {
-                                ObjectId = id,
-                                Name = structure.Name,
-                                PartFamilyName = structure.PartFamilyName ?? "Unknown",
-                                DisplayName = $"{structure.Name} ({structure.PartFamilyName ?? "Structure"})"
-                            });
-                        }
-                    }
-
                     tr.Commit();
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"PopulateStructureList error: {ex.Message}");
+                Log($"Error loading pipe networks: {ex.GetType().Name}: {ex.Message}", Brushes.Red);
             }
 
             UpdateStructureCount();
@@ -220,12 +197,6 @@ namespace CatchmentTool.UI
                 return;
             }
 
-            if (!(cmbNetwork.SelectedItem is NetworkInfo netInfo))
-            {
-                MessageBox.Show("Please select a pipe network", "Invalid Input", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
             var selectedStructures = _structures.Where(s => s.IsSelected).ToList();
             if (selectedStructures.Count == 0)
             {
@@ -257,27 +228,24 @@ namespace CatchmentTool.UI
             Log("");
 
             // Run in background thread
-            Task.Run(() => RunDelineation(surfInfo.Id, netInfo.Id, selectedStructures, cellSize, snapTol));
+            Task.Run(() => RunDelineation(surfInfo.Id, _networkIds.ToList(), selectedStructures, cellSize, snapTol));
         }
 
-        private void RunDelineation(ObjectId surfaceId, ObjectId networkId, List<StructureItem> selectedStructures, double cellSize, double snapTolerance)
+        private void RunDelineation(ObjectId surfaceId, List<ObjectId> networkIds, List<StructureItem> selectedStructures, double cellSize, double snapTolerance)
         {
             try
             {
-                // Refresh the network and surface objects
-                Autodesk.Civil.DatabaseServices.Network network = null;
                 TinSurface surface = null;
 
                 using (var tr = _db.TransactionManager.StartTransaction())
                 {
                     surface = tr.GetObject(surfaceId, OpenMode.ForRead) as TinSurface;
-                    network = tr.GetObject(networkId, OpenMode.ForRead) as Autodesk.Civil.DatabaseServices.Network;
                     tr.Commit();
                 }
 
-                if (surface == null || network == null)
+                if (surface == null)
                 {
-                    Log("Error: Could not open surface or network", Brushes.Red);
+                    Log("Error: Could not open surface", Brushes.Red);
                     return;
                 }
 
@@ -334,33 +302,38 @@ namespace CatchmentTool.UI
                 {
                     using (var tr = _db.TransactionManager.StartTransaction())
                     {
-                        var net = tr.GetObject(networkId, OpenMode.ForRead)
-                                  as Autodesk.Civil.DatabaseServices.Network;
-                        if (net != null)
+                        foreach (ObjectId netId in networkIds)
                         {
-                            var pipeIds = net.GetPipeIds();
-                            foreach (ObjectId pipeId in pipeIds)
+                            var net = tr.GetObject(netId, OpenMode.ForRead)
+                                      as Autodesk.Civil.DatabaseServices.Network;
+                            if (net == null) continue;
+                            try
                             {
-                                var pipe = tr.GetObject(pipeId, OpenMode.ForRead)
-                                           as Autodesk.Civil.DatabaseServices.Pipe;
-                                if (pipe == null) continue;
-                                pipeSegments.Add(new PipeBurner.PipeSegment
+                                var pipeIds = net.GetPipeIds();
+                                foreach (ObjectId pipeId in pipeIds)
                                 {
-                                    StartX = pipe.StartPoint.X,
-                                    StartY = pipe.StartPoint.Y,
-                                    StartInvert = pipe.StartPoint.Z,
-                                    EndX = pipe.EndPoint.X,
-                                    EndY = pipe.EndPoint.Y,
-                                    EndInvert = pipe.EndPoint.Z,
-                                });
+                                    var pipe = tr.GetObject(pipeId, OpenMode.ForRead)
+                                               as Autodesk.Civil.DatabaseServices.Pipe;
+                                    if (pipe == null) continue;
+                                    pipeSegments.Add(new PipeBurner.PipeSegment
+                                    {
+                                        StartX = pipe.StartPoint.X,
+                                        StartY = pipe.StartPoint.Y,
+                                        StartInvert = pipe.StartPoint.Z,
+                                        EndX = pipe.EndPoint.X,
+                                        EndY = pipe.EndPoint.Y,
+                                        EndInvert = pipe.EndPoint.Z,
+                                    });
+                                }
                             }
+                            catch { /* skip networks whose pipes can't be read */ }
                         }
                         tr.Commit();
                     }
                 }
                 catch (Exception ex)
                 {
-                    Log($"Warning: Could not extract pipes from network: {ex.Message}", Brushes.Yellow);
+                    Log($"Warning: Could not extract pipes: {ex.Message}", Brushes.Yellow);
                     pipeSegments.Clear();
                 }
 

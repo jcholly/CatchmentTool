@@ -15,7 +15,6 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -32,17 +31,12 @@
             <ComboBox x:Name="cmbSurface" Height="25" Margin="5"/>
         </GroupBox>
 
-        <!-- Pipe Network Selection -->
-        <GroupBox Grid.Row="2" Header="2. Select Pipe Network" Margin="0,0,0,10">
-            <ComboBox x:Name="cmbNetwork" Height="25" Margin="5" SelectionChanged="CmbNetwork_SelectionChanged"/>
-        </GroupBox>
-
         <!-- Inlet Structures Selection -->
-        <GroupBox Grid.Row="3" Header="3. Select Inlet Structures" Margin="0,0,0,10">
+        <GroupBox Grid.Row="2" Header="2. Select Inlet Structures" Margin="0,0,0,10">
             <Grid Margin="5">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="120"/>
+                    <RowDefinition Height="160"/>
                 </Grid.RowDefinitions>
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,5">
                     <Button x:Name="btnSelectAll" Content="Select All" Width="80" Height="22"
@@ -52,22 +46,35 @@
                     <TextBlock x:Name="txtStructureCount" Margin="15,3,0,0"
                                Text="0 structures selected" Foreground="Gray"/>
                 </StackPanel>
-                <ListBox x:Name="lstStructures" Grid.Row="1"
-                         SelectionMode="Multiple"
-                         BorderThickness="1" BorderBrush="#CCCCCC">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <CheckBox Content="{Binding DisplayName}"
-                                      IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                                      Margin="2"/>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                <DataGrid x:Name="lstStructures" Grid.Row="1"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False" CanUserDeleteRows="False"
+                          CanUserResizeRows="False"
+                          HeadersVisibility="Column"
+                          SelectionMode="Single"
+                          GridLinesVisibility="Horizontal"
+                          BorderThickness="1" BorderBrush="#CCCCCC"
+                          RowBackground="White" AlternatingRowBackground="#F5F5F5"
+                          FontSize="12">
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Width="36" CanUserResize="False">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="Structure Name" Binding="{Binding Name}" Width="*" IsReadOnly="True"/>
+                        <DataGridTextColumn Header="Part" Binding="{Binding PartFamilyName}" Width="*" IsReadOnly="True"/>
+                        <DataGridTextColumn Header="Network" Binding="{Binding NetworkName}" Width="*" IsReadOnly="True"/>
+                    </DataGrid.Columns>
+                </DataGrid>
             </Grid>
         </GroupBox>
 
         <!-- Settings -->
-        <GroupBox Grid.Row="4" Header="4. Settings" Margin="0,0,0,10">
+        <GroupBox Grid.Row="3" Header="3. Settings" Margin="0,0,0,10">
             <Grid Margin="5">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -88,7 +95,7 @@
         </GroupBox>
 
         <!-- Progress Log -->
-        <GroupBox Grid.Row="5" Header="Progress Log" Margin="0,0,0,10">
+        <GroupBox Grid.Row="4" Header="Progress Log" Margin="0,0,0,10">
             <RichTextBox x:Name="rtbLog" IsReadOnly="True"
                          VerticalScrollBarVisibility="Auto"
                          HorizontalScrollBarVisibility="Auto"
@@ -108,7 +115,7 @@
         </GroupBox>
 
         <!-- Progress Bar -->
-        <Grid Grid.Row="6" Margin="0,0,0,10">
+        <Grid Grid.Row="5" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
@@ -118,7 +125,7 @@
         </Grid>
 
         <!-- Buttons -->
-        <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0">
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0">
             <Button x:Name="btnRun" Content="Run Delineation" Width="120" Height="32"
                     Click="BtnRun_Click" Margin="0,0,10,0"
                     Background="#0078D4" Foreground="White" FontWeight="SemiBold"/>
