@@ -231,6 +231,49 @@ def _nearest_inlet(x: float, y: float, inlets: List[Inlet], snap: float
     return best
 
 
+def _segment_inlet_hit(sx: float, sy: float, ex: float, ey: float,
+                       inlets: List[Inlet], snap: float
+                       ) -> Optional[Tuple[int, float, float]]:
+    """Does the segment s→e pass within `snap` of any inlet?
+
+    If multiple inlets qualify, return the one with the smallest parameter t
+    (the inlet the drop reaches first along its path), not the nearest in
+    distance — that matches real-world inlet interception: a drop falls into
+    the first grate it crosses, even if a closer grate is further along.
+
+    Returns (inlet_id, hit_x, hit_y) or None.
+    """
+    dx = ex - sx
+    dy = ey - sy
+    seg_len2 = dx * dx + dy * dy
+    if seg_len2 < 1e-18:
+        return None
+    snap2 = snap * snap
+    best_t = 2.0
+    best_id = -1
+    best_hx = 0.0
+    best_hy = 0.0
+    for inl in inlets:
+        t = ((inl.x - sx) * dx + (inl.y - sy) * dy) / seg_len2
+        if t < 0.0:
+            t = 0.0
+        elif t > 1.0:
+            t = 1.0
+        hx = sx + t * dx
+        hy = sy + t * dy
+        ddx = inl.x - hx
+        ddy = inl.y - hy
+        d2 = ddx * ddx + ddy * ddy
+        if d2 < snap2 and t < best_t:
+            best_t = t
+            best_id = inl.id
+            best_hx = hx
+            best_hy = hy
+    if best_id >= 0:
+        return (best_id, best_hx, best_hy)
+    return None
+
+
 def trace(tin: Tin, start_x: float, start_y: float,
           inlets: List[Inlet], snap_tol: float = 5.0,
           max_steps: int = 5000, capture_path: bool = False
@@ -303,6 +346,21 @@ def trace(tin: Tin, start_x: float, start_y: float,
                     final_x=cx, final_y=cy,
                     how_resolved=Resolution.ORPHAN, path=path,
                 )
+
+        # Inlet interception: a drop is captured by any inlet grate its
+        # path passes within snap_tol of, not just the step's endpoint.
+        # Fixes the walker's 1%-direct rate on real TINs: drops routinely
+        # skip past inlets and die in downstream micro-sinks.
+        hit = _segment_inlet_hit(cx, cy, new_x, new_y, inlets, snap_tol)
+        if hit is not None:
+            inlet_id, hx, hy = hit
+            if path is not None:
+                path.append((hx, hy))
+            return TraceResult(
+                inlet_id=inlet_id, step_count=step,
+                final_x=hx, final_y=hy,
+                how_resolved=Resolution.DIRECT, path=path,
+            )
 
         cx, cy = new_x, new_y
         if path is not None:

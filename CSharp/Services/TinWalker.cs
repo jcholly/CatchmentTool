@@ -148,6 +148,23 @@ namespace CatchmentTool.Services
                         return ResolveStuck(cx, cy, step, path);
                 }
 
+                // Inlet interception along the step segment. A drop is
+                // captured by any inlet grate its path passes within
+                // snapTolerance of, not just the step's endpoint. Without
+                // this, drops routinely skip past inlets in long strides
+                // and die in downstream micro-sinks.
+                if (TryInterceptInlet(cx, cy, newX, newY,
+                        out int hitInletId, out double hitX, out double hitY))
+                {
+                    path?.Add(new Point2d(hitX, hitY));
+                    return new TraceResult
+                    {
+                        InletId = hitInletId, StepCount = step,
+                        FinalX = hitX, FinalY = hitY,
+                        HowResolved = Resolution.Direct, Path = path
+                    };
+                }
+
                 cx = newX;
                 cy = newY;
                 path?.Add(new Point2d(cx, cy));
@@ -222,6 +239,52 @@ namespace CatchmentTool.Services
                 }
             }
             return bestId;
+        }
+
+        /// <summary>
+        /// Does the segment (sx,sy)→(ex,ey) pass within snapTolerance of any
+        /// inlet? If multiple inlets qualify, return the one the drop reaches
+        /// first along the segment (smallest clamped t), not the closest in
+        /// distance — matches real-world grate interception.
+        /// </summary>
+        private bool TryInterceptInlet(double sx, double sy,
+                                       double ex, double ey,
+                                       out int hitInletId,
+                                       out double hitX, out double hitY)
+        {
+            hitInletId = -1;
+            hitX = 0.0;
+            hitY = 0.0;
+
+            double dx = ex - sx;
+            double dy = ey - sy;
+            double segLen2 = dx * dx + dy * dy;
+            if (segLen2 < 1e-18) return false;
+
+            double snap2 = _snapTolerance * _snapTolerance;
+            double bestT = 2.0;
+
+            for (int i = 0; i < _inlets.Count; i++)
+            {
+                double t = ((_inlets[i].X - sx) * dx
+                            + (_inlets[i].Y - sy) * dy) / segLen2;
+                if (t < 0.0) t = 0.0;
+                else if (t > 1.0) t = 1.0;
+
+                double px = sx + t * dx;
+                double py = sy + t * dy;
+                double ddx = _inlets[i].X - px;
+                double ddy = _inlets[i].Y - py;
+                double d2 = ddx * ddx + ddy * ddy;
+                if (d2 < snap2 && t < bestT)
+                {
+                    bestT = t;
+                    hitInletId = _inlets[i].Id;
+                    hitX = px;
+                    hitY = py;
+                }
+            }
+            return hitInletId >= 0;
         }
 
         private TraceResult ResolveOffSurface(double x, double y, int steps, List<Point2d> path)
