@@ -110,26 +110,30 @@ namespace CatchmentTool.UI
         private void LoadNetworks()
         {
             _networks = new List<NetworkInfo>();
-            var civilDoc = CivilApplication.ActiveDocument;
-            var networkIds = civilDoc.GetPipeNetworkIds();
-
-            using (var tr = _db.TransactionManager.StartTransaction())
+            try
             {
-                foreach (ObjectId id in networkIds)
+                var civilDoc = CivilApplication.ActiveDocument;
+                var networkIds = civilDoc.GetPipeNetworkIds();
+
+                using (var tr = _db.TransactionManager.StartTransaction())
                 {
-                    var network = tr.GetObject(id, OpenMode.ForRead) as Autodesk.Civil.DatabaseServices.Network;
-                    if (network != null)
+                    foreach (ObjectId id in networkIds)
                     {
-                        _networks.Add(new NetworkInfo
+                        var network = tr.GetObject(id, OpenMode.ForRead) as Autodesk.Civil.DatabaseServices.Network;
+                        if (network != null)
                         {
-                            Id = id,
-                            Name = network.Name,
-                            DisplayName = network.Name
-                        });
+                            _networks.Add(new NetworkInfo
+                            {
+                                Id = id,
+                                Name = network.Name,
+                                DisplayName = network.Name
+                            });
+                        }
                     }
+                    tr.Commit();
                 }
-                tr.Commit();
             }
+            catch { /* no pipe networks in drawing, leave list empty */ }
 
             cmbNetwork.ItemsSource = _networks;
             cmbNetwork.DisplayMemberPath = "DisplayName";
@@ -148,33 +152,37 @@ namespace CatchmentTool.UI
             if (!(cmbNetwork.SelectedItem is NetworkInfo networkInfo))
                 return;
 
-            var network = (Autodesk.Civil.DatabaseServices.Network)null;
-            using (var tr = _db.TransactionManager.StartTransaction())
+            try
             {
-                network = tr.GetObject(networkInfo.Id, OpenMode.ForRead) as Autodesk.Civil.DatabaseServices.Network;
-                if (network == null)
+                using (var tr = _db.TransactionManager.StartTransaction())
                 {
-                    tr.Commit();
-                    return;
-                }
+                    var network = tr.GetObject(networkInfo.Id, OpenMode.ForRead)
+                                  as Autodesk.Civil.DatabaseServices.Network;
+                    if (network == null) { tr.Commit(); return; }
 
-                var structureIds = network.GetStructureIds();
-                foreach (ObjectId id in structureIds)
-                {
-                    var structure = tr.GetObject(id, OpenMode.ForRead) as Autodesk.Civil.DatabaseServices.Structure;
-                    if (structure != null)
+                    var structureIds = network.GetStructureIds();
+                    foreach (ObjectId id in structureIds)
                     {
-                        _structures.Add(new StructureItem
+                        var structure = tr.GetObject(id, OpenMode.ForRead)
+                                        as Autodesk.Civil.DatabaseServices.Structure;
+                        if (structure != null)
                         {
-                            ObjectId = id,
-                            Name = structure.Name,
-                            PartFamilyName = structure.PartFamilyName ?? "Unknown",
-                            DisplayName = $"{structure.Name} ({structure.PartFamilyName ?? "Structure"})"
-                        });
+                            _structures.Add(new StructureItem
+                            {
+                                ObjectId = id,
+                                Name = structure.Name,
+                                PartFamilyName = structure.PartFamilyName ?? "Unknown",
+                                DisplayName = $"{structure.Name} ({structure.PartFamilyName ?? "Structure"})"
+                            });
+                        }
                     }
-                }
 
-                tr.Commit();
+                    tr.Commit();
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"PopulateStructureList error: {ex.Message}");
             }
 
             UpdateStructureCount();
@@ -322,29 +330,38 @@ namespace CatchmentTool.UI
                 // corridor so priority-flood respects the designed drainage
                 // instead of letting the lowest collector dominate.
                 var pipeSegments = new List<PipeBurner.PipeSegment>();
-                using (var tr = _db.TransactionManager.StartTransaction())
+                try
                 {
-                    var net = tr.GetObject(networkId, OpenMode.ForRead)
-                              as Autodesk.Civil.DatabaseServices.Network;
-                    if (net != null)
+                    using (var tr = _db.TransactionManager.StartTransaction())
                     {
-                        foreach (ObjectId pipeId in net.GetPipeIds())
+                        var net = tr.GetObject(networkId, OpenMode.ForRead)
+                                  as Autodesk.Civil.DatabaseServices.Network;
+                        if (net != null)
                         {
-                            var pipe = tr.GetObject(pipeId, OpenMode.ForRead)
-                                       as Autodesk.Civil.DatabaseServices.Pipe;
-                            if (pipe == null) continue;
-                            pipeSegments.Add(new PipeBurner.PipeSegment
+                            var pipeIds = net.GetPipeIds();
+                            foreach (ObjectId pipeId in pipeIds)
                             {
-                                StartX = pipe.StartPoint.X,
-                                StartY = pipe.StartPoint.Y,
-                                StartInvert = pipe.StartPoint.Z,
-                                EndX = pipe.EndPoint.X,
-                                EndY = pipe.EndPoint.Y,
-                                EndInvert = pipe.EndPoint.Z,
-                            });
+                                var pipe = tr.GetObject(pipeId, OpenMode.ForRead)
+                                           as Autodesk.Civil.DatabaseServices.Pipe;
+                                if (pipe == null) continue;
+                                pipeSegments.Add(new PipeBurner.PipeSegment
+                                {
+                                    StartX = pipe.StartPoint.X,
+                                    StartY = pipe.StartPoint.Y,
+                                    StartInvert = pipe.StartPoint.Z,
+                                    EndX = pipe.EndPoint.X,
+                                    EndY = pipe.EndPoint.Y,
+                                    EndInvert = pipe.EndPoint.Z,
+                                });
+                            }
                         }
+                        tr.Commit();
                     }
-                    tr.Commit();
+                }
+                catch (Exception ex)
+                {
+                    Log($"Warning: Could not extract pipes from network: {ex.Message}", Brushes.Yellow);
+                    pipeSegments.Clear();
                 }
 
                 // Build spillover hierarchy first — priority-flood from inlets
