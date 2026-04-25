@@ -164,10 +164,20 @@ namespace CatchmentTool.Services
         {
             if (inlets == null || inlets.Count == 0) return 0;
 
-            // Classify every off-surface cell as either outside-hull
-            // (reachable from grid boundary by flood-fill through off-surface
-            // cells) or interior-hole (surrounded by inside-TIN cells).
-            var outsideHull = ClassifyOutsideHull();
+            // Voronoi-style coverage: every grid cell whose nearest inlet is
+            // within `maxDist` gets assigned to that inlet, regardless of TIN
+            // gaps. The TIN already provided priority-flood with elevations
+            // for the cells it covers; we use Euclidean-nearest only to
+            // tessellate the rest. Cells beyond `maxDist` from any inlet are
+            // genuine "off-site" and stay excluded.
+            //
+            // maxDist = max(150 ft, 4 * site_diagonal / sqrt(n_inlets)).
+            double siteDiag = Math.Sqrt(
+                (double)(Cols * _cellSize) * (Cols * _cellSize)
+                + (double)(Rows * _cellSize) * (Rows * _cellSize));
+            double maxDist = Math.Max(150.0,
+                4.0 * siteDiag / Math.Sqrt(inlets.Count));
+            double maxDist2 = maxDist * maxDist;
 
             int rescued = 0;
             for (int r = 0; r < Rows; r++)
@@ -176,7 +186,6 @@ namespace CatchmentTool.Services
                 for (int c = 0; c < Cols; c++)
                 {
                     if (Labels[r, c] >= 0) continue;
-                    if (outsideHull[r, c]) continue;  // drains off-site
 
                     double x = OriginX + c * _cellSize;
                     double bestD2 = double.MaxValue;
@@ -192,25 +201,24 @@ namespace CatchmentTool.Services
                             bestId = inlets[i].Id;
                         }
                     }
-                    if (bestId >= 0)
+                    if (bestId < 0 || bestD2 > maxDist2) continue;
+
+                    Labels[r, c] = bestId;
+                    var prev = Resolutions[r, c];
+                    Resolutions[r, c] = TinWalker.Resolution.Spillover;
+                    SpilloverCells++;
+                    if (prev == TinWalker.Resolution.Orphan)
                     {
-                        Labels[r, c] = bestId;
-                        var prev = Resolutions[r, c];
-                        Resolutions[r, c] = TinWalker.Resolution.Spillover;
-                        SpilloverCells++;
-                        if (prev == TinWalker.Resolution.Orphan)
-                        {
-                            OrphanCells--;
-                            TracedCells++;
-                            UnresolvedCells--;
-                        }
-                        else if (prev == TinWalker.Resolution.OffSurface)
-                        {
-                            OffSurfaceCells--;
-                            TracedCells++;
-                        }
-                        rescued++;
+                        OrphanCells--;
+                        TracedCells++;
+                        UnresolvedCells--;
                     }
+                    else if (prev == TinWalker.Resolution.OffSurface)
+                    {
+                        OffSurfaceCells--;
+                        TracedCells++;
+                    }
+                    rescued++;
                 }
             }
             return rescued;

@@ -596,39 +596,82 @@ def resolve_orphan_islands(labels: np.ndarray, elev: np.ndarray,
                            inlets: List[Inlet], outside_hull: np.ndarray,
                            origin_x: float, origin_y: float,
                            cell_size: float,
-                           include_interior_holes: bool = True
+                           include_interior_holes: bool = True,
+                           cover_full_bbox: bool = True,
+                           bbox_margin_cells: int = 2,
                            ) -> Tuple[int, int, int]:
-    """Assign every site-interior cell that isn't labelled to its
-    Euclidean-nearest inlet.
+    """Assign every cell that isn't labelled to its Euclidean-nearest inlet.
 
-    "Site-interior" = anything that isn't the outside-hull (exterior of
-    the TIN) — this includes both inside-TIN orphans AND interior holes
-    (buildings cut out of the TIN). Water falling on a building roof
-    ultimately drains somewhere via the storm system, so building cells
-    are legitimately part of some inlet's catchment.
+    Default behavior (cover_full_bbox=True) covers the WHOLE grid bounding
+    box, ignoring TIN coverage gaps for tessellation purposes. The TIN was
+    sampled to give priority-flood real elevations, but on fragmented sites
+    its narrow gaps create visible holes between catchments that aren't
+    actually "sides of the surface" (roads, alleys, etc. that do drain to
+    inlets). Just covering everything gives clean coherent polygons.
 
-    Cells outside the TIN hull (the actual "sides of surfaces" case) stay
-    excluded. This is the rule the user asked for.
+    Cells more than `bbox_margin_cells` away from any TIN cell are still
+    excluded — those are the genuine "sides of the surface" outside the
+    designed area.
 
     Returns (n_components_processed, n_assigned_cells, n_excluded_cells).
     Modifies `labels` in place.
     """
-    from scipy.ndimage import label as cc_label
+    from scipy.ndimage import label as cc_label, binary_dilation
     from scipy.spatial import cKDTree
 
     rows, cols = labels.shape
-    # Everything that is NOT outside-hull and is NOT already labelled
-    # needs a catchment. That's:
-    #   - inside-TIN cells priority-flood couldn't reach (orphans)
-    #   - interior holes (buildings) if include_interior_holes is True
-    needs_label = (labels < 0) & (~outside_hull)
-    if not include_interior_holes:
-        inside = np.isfinite(elev)
-        needs_label = needs_label & inside
-    if not needs_label.any():
-        return (0, 0, 0)
 
-    # Count "components" for reporting.
+    if cover_full_bbox:
+        # Compute "near any inlet" = cells whose Euclidean distance to the
+        # nearest inlet is below a threshold. Anything farther is genuine
+        # off-site (no designed drainage near it). Threshold defaults to
+        # the diagonal of the TIN bbox / sqrt(n_inlets) * 4 — generous
+        # enough to cover real catchments, small enough to exclude
+        # truly-distant exterior.
+        inside = np.isfinite(elev)
+        if inside.any():
+            rs_in, cs_in = np.where(inside)
+            site_diag = math.hypot(
+                (cs_in.max() - cs_in.min()) * cell_size,
+                (rs_in.max() - rs_in.min()) * cell_size,
+            )
+            avg_radius = site_diag / max(1, math.sqrt(len(inlets)))
+            max_dist = max(150.0, 4.0 * avg_radius)
+        else:
+            max_dist = 1e9
+
+        # Mark every cell as needing a label if within max_dist of an inlet.
+        rs_all, cs_all = np.meshgrid(
+            np.arange(rows), np.arange(cols), indexing='ij')
+        xs_all = origin_x + cs_all * cell_size
+        ys_all = origin_y + rs_all * cell_size
+        # Use KDTree once over all unlabeled cells.
+        unlabeled = labels < 0
+        if unlabeled.any():
+            inlet_pts_all = np.array(
+                [[inl.x, inl.y] for inl in inlets], dtype=np.float64)
+            tree_all = cKDTree(inlet_pts_all)
+            qpts = np.stack(
+                [xs_all[unlabeled], ys_all[unlabeled]], axis=1)
+            dists, _ = tree_all.query(qpts)
+            near_mask = dists < max_dist
+            # Build a boolean grid of "needs_label"
+            needs_label = np.zeros_like(unlabeled)
+            ulr, ulc = np.where(unlabeled)
+            needs_label[ulr[near_mask], ulc[near_mask]] = True
+        else:
+            needs_label = np.zeros_like(unlabeled)
+        excluded = (labels < 0) & ~needs_label
+    else:
+        needs_label = (labels < 0) & (~outside_hull)
+        excluded = outside_hull & (labels < 0)
+        if not include_interior_holes:
+            inside = np.isfinite(elev)
+            needs_label = needs_label & inside
+
+    if not needs_label.any():
+        return (0, 0, int(excluded.sum()))
+
     _, n_cc = cc_label(needs_label)
 
     inlet_pts = np.array([[inl.x, inl.y] for inl in inlets], dtype=np.float64)
@@ -642,7 +685,7 @@ def resolve_orphan_islands(labels: np.ndarray, elev: np.ndarray,
     _, nearest_idx = tree.query(query_pts)
     labels[needs_label] = inlet_ids[nearest_idx]
     n_assigned = int(needs_label.sum())
-    return (n_cc, n_assigned, 0)
+    return (n_cc, n_assigned, int(excluded.sum()))
 
 
 def filter_small_components(labels: np.ndarray, min_cells: int
