@@ -23,11 +23,12 @@ from matplotlib.collections import LineCollection
 
 from parse_landxml import parse
 from tin_harness import (
-    Inlet, _sample_elev_grid, _flood_from_inlets,
+    Inlet, Resolution, _sample_elev_grid, _flood_from_inlets,
     burn_pipes_into_elev, build_tin, elevation_at_xy,
     classify_off_surface, resolve_orphan_islands,
     filter_small_components, component_count_per_inlet,
-    exclude_cells_far_from_inlet,
+    exclude_cells_far_from_inlet, light_condition_grid,
+    trace_d8,
 )
 
 
@@ -67,15 +68,50 @@ def run(xml_path: Path, cell_size: float = 10.0,
     print(f"  Inlets: {len(inlets)}  "
           f"(pipes: {len(data.pipes)}, structures: {len(data.structures)})")
 
-    # Sample grid, burn pipes, flood.
-    print("Sampling grid, burning pipes, priority-flood...")
+    # Sample grid, burn pipes, light-condition, flood.
+    print("Sampling grid, burning pipes, light-conditioning, "
+          "priority-flood...")
     t0 = time.time()
     elev, ox, oy, rows, cols = _sample_elev_grid(tin, cell_size)
     n_burn = burn_pipes_into_elev(elev, ox, oy, cell_size,
                                   data.pipes, data.structures)
+    # Light conditioning: fill micro-sinks below 0.5 ft. Skip-near-inlet
+    # uses 2 * snap tolerance (5 ft default -> 10 ft) so designed low
+    # points stay sinks.
+    elev, n_raised = light_condition_grid(
+        elev, inlets, ox, oy, cell_size,
+        max_fill_depth=0.5, skip_radius=10.0)
+    # Walker pass on the conditioned grid (D8 steepest-descent). Cells
+    # where the walker physically reaches an inlet are labelled "Direct";
+    # the priority-flood spillover handles the rest as before.
+    print(f"  Walker (D8 on conditioned grid)...", end=" ", flush=True)
+    walker_labels = np.full((rows, cols), -1, dtype=np.int64)
+    n_direct = 0
+    n_walker_attempts = 0
+    for r in range(rows):
+        y = oy + r * cell_size
+        for c in range(cols):
+            if np.isnan(elev[r, c]):
+                continue
+            x = ox + c * cell_size
+            n_walker_attempts += 1
+            res = trace_d8(elev, ox, oy, cell_size, x, y, inlets,
+                           snap_tol=5.0, max_steps=2000)
+            if res.inlet_id >= 0:
+                walker_labels[r, c] = res.inlet_id
+                n_direct += 1
+    walker_pct = (100.0 * n_direct / max(1, n_walker_attempts))
+    print(f"{n_direct:,}/{n_walker_attempts:,} direct ({walker_pct:.1f}%)")
+
     labels = _flood_from_inlets(elev, inlets, ox, oy, cell_size)
+    # Walker results overlay priority-flood: walker is more physically
+    # accurate where it succeeds, so prefer it.
+    walker_mask = walker_labels >= 0
+    labels[walker_mask] = walker_labels[walker_mask]
     print(f"  Grid: {rows}x{cols} = {rows*cols:,} cells")
     print(f"  Pipe-burned cells: {n_burn}")
+    print(f"  Light-conditioning raised {n_raised:,} cells "
+          f"(<0.5 ft micro-sinks)")
     print(f"  Flood: {time.time()-t0:.1f}s")
 
     # --- STATISTICS: BEFORE ----

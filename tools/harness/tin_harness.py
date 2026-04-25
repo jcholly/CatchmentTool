@@ -274,6 +274,96 @@ def _segment_inlet_hit(sx: float, sy: float, ex: float, ey: float,
     return None
 
 
+def trace_d8(elev: np.ndarray, origin_x: float, origin_y: float,
+             cell_size: float, start_x: float, start_y: float,
+             inlets: List[Inlet], snap_tol: float = 5.0,
+             max_steps: int = 5000) -> TraceResult:
+    """Steepest-descent water drop on a (light-conditioned) elevation grid.
+
+    Same conceptual job as `trace()` but operates on the grid instead of
+    TIN triangles. Use this when the grid has been pre-conditioned to
+    remove micro-sinks so the walker doesn't die immediately.
+
+    8-neighbor (D8) descent: at each step, jump to whichever of the 8
+    neighbors has the lowest elevation, weighted by Euclidean step
+    distance. Stops on inlet snap or local minimum.
+    """
+    rows, cols = elev.shape
+    # Convert start to nearest cell center.
+    c = int(round((start_x - origin_x) / cell_size))
+    r = int(round((start_y - origin_y) / cell_size))
+    cx = origin_x + c * cell_size
+    cy = origin_y + r * cell_size
+
+    if not (0 <= r < rows and 0 <= c < cols) or np.isnan(elev[r, c]):
+        return TraceResult(
+            inlet_id=-1, step_count=0, final_x=cx, final_y=cy,
+            how_resolved=Resolution.OFF_SURFACE, path=None,
+        )
+
+    DIAG = math.sqrt(2.0)
+    neighbor_offsets = [
+        (-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
+        (-1, -1, DIAG), (-1, 1, DIAG), (1, -1, DIAG), (1, 1, DIAG),
+    ]
+
+    for step in range(max_steps):
+        # Inlet snap on current position.
+        near = _nearest_inlet(cx, cy, inlets, snap_tol)
+        if near >= 0:
+            return TraceResult(
+                inlet_id=near, step_count=step,
+                final_x=cx, final_y=cy,
+                how_resolved=Resolution.DIRECT, path=None,
+            )
+
+        cur_z = elev[r, c]
+        best_slope = 0.0
+        best_dr = 0
+        best_dc = 0
+        for dr, dc, dist in neighbor_offsets:
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < rows and 0 <= nc < cols):
+                continue
+            nz = elev[nr, nc]
+            if np.isnan(nz):
+                continue
+            slope = (cur_z - nz) / (dist * cell_size)
+            if slope > best_slope:
+                best_slope = slope
+                best_dr = dr
+                best_dc = dc
+
+        if best_slope <= 0:
+            return TraceResult(
+                inlet_id=-1, step_count=step,
+                final_x=cx, final_y=cy,
+                how_resolved=Resolution.ORPHAN, path=None,
+            )
+
+        new_x = cx + best_dc * cell_size
+        new_y = cy + best_dr * cell_size
+        # Inlet interception along the step segment.
+        hit = _segment_inlet_hit(cx, cy, new_x, new_y, inlets, snap_tol)
+        if hit is not None:
+            inlet_id, hx, hy = hit
+            return TraceResult(
+                inlet_id=inlet_id, step_count=step,
+                final_x=hx, final_y=hy,
+                how_resolved=Resolution.DIRECT, path=None,
+            )
+
+        r += best_dr
+        c += best_dc
+        cx, cy = new_x, new_y
+
+    return TraceResult(
+        inlet_id=-1, step_count=max_steps,
+        final_x=cx, final_y=cy,
+        how_resolved=Resolution.ORPHAN, path=None,
+    )
+
+
 def trace(tin: Tin, start_x: float, start_y: float,
           inlets: List[Inlet], snap_tol: float = 5.0,
           max_steps: int = 5000, capture_path: bool = False
@@ -474,6 +564,88 @@ def _pipe_end_invert(struct, role: str) -> float:
     if math.isfinite(struct.z_sump):
         return struct.z_sump
     return struct.z_rim
+
+
+def light_condition_grid(elev: np.ndarray, inlets: List[Inlet],
+                         origin_x: float, origin_y: float, cell_size: float,
+                         max_fill_depth: float = 0.5,
+                         skip_radius: float = 0.0
+                         ) -> Tuple[np.ndarray, int]:
+    """Fill micro-sinks on the elevation grid (Planchon-Darboux variant
+    with a depth cap).
+
+    Removes TIN-noise depressions that the walker would die in, while
+    preserving real depressions deeper than `max_fill_depth`. Cells near
+    inlets (within `skip_radius`) are seeded as legitimate sinks so we
+    don't fill the design low points.
+
+    Returns (conditioned_elev_copy, n_cells_raised).
+    """
+    rows, cols = elev.shape
+    filled = elev.copy()
+    visited = np.zeros((rows, cols), dtype=bool)
+    heap: List[Tuple[float, int, int]] = []
+
+    # Seed: every grid-boundary cell + every inlet cell.
+    for c in range(cols):
+        for r in (0, rows - 1):
+            if not np.isnan(elev[r, c]) and not visited[r, c]:
+                visited[r, c] = True
+                heapq.heappush(heap, (float(elev[r, c]), r, c))
+    for r in range(rows):
+        for c in (0, cols - 1):
+            if not np.isnan(elev[r, c]) and not visited[r, c]:
+                visited[r, c] = True
+                heapq.heappush(heap, (float(elev[r, c]), r, c))
+
+    skip_r2 = skip_radius * skip_radius
+    for inl in inlets:
+        c = int(round((inl.x - origin_x) / cell_size))
+        r = int(round((inl.y - origin_y) / cell_size))
+        if 0 <= r < rows and 0 <= c < cols and not np.isnan(elev[r, c]):
+            if not visited[r, c]:
+                visited[r, c] = True
+                heapq.heappush(heap, (float(elev[r, c]), r, c))
+
+    n_raised = 0
+    while heap:
+        water_z, r, c = heapq.heappop(heap)
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < rows and 0 <= nc < cols):
+                continue
+            if visited[nr, nc]:
+                continue
+            if np.isnan(elev[nr, nc]):
+                continue
+            visited[nr, nc] = True
+
+            # Skip-near-inlet: don't raise cells close to a designed sink.
+            if skip_r2 > 0:
+                x = origin_x + nc * cell_size
+                y = origin_y + nr * cell_size
+                near_inlet = False
+                for inl in inlets:
+                    dxi = x - inl.x
+                    dyi = y - inl.y
+                    if dxi * dxi + dyi * dyi < skip_r2:
+                        near_inlet = True
+                        break
+                if near_inlet:
+                    nw = float(elev[nr, nc])
+                    heapq.heappush(heap, (nw, nr, nc))
+                    continue
+
+            target = max(float(elev[nr, nc]), water_z)
+            cap = float(elev[nr, nc]) + max_fill_depth
+            if target > cap:
+                target = cap
+            if target > float(elev[nr, nc]):
+                filled[nr, nc] = target
+                n_raised += 1
+            heapq.heappush(heap, (target, nr, nc))
+
+    return filled, n_raised
 
 
 def burn_pipes_into_elev(elev: np.ndarray, origin_x: float, origin_y: float,
