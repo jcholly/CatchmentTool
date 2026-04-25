@@ -17,6 +17,8 @@ namespace CatchmentTool.Services
         private readonly double _snapTolerance;
         private readonly int _maxSteps;
 
+        public double SnapTolerance => _snapTolerance;
+
         public struct InletTarget
         {
             public int Id;

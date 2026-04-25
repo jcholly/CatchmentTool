@@ -387,6 +387,8 @@ namespace CatchmentTool.UI
                 double hierarchyTime = hierarchy.Build();
                 Log($"  Grid: {hierarchy.Cols} x {hierarchy.Rows} = {hierarchy.Rows * hierarchy.Cols:N0} cells");
                 Log($"  Pipe-burned cells: {hierarchy.BurnedCells:N0}");
+                Log($"  Light-conditioned (filled micro-sinks): "
+                    + $"{hierarchy.RaisedCells:N0} cells");
                 Log($"  Labelled: {hierarchy.LabelledCells:N0}  Orphan: {hierarchy.OrphanCells:N0}");
                 Log($"  Time: {hierarchyTime:F1} seconds", Brushes.LightGreen);
                 Log("");

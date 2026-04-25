@@ -106,7 +106,14 @@ namespace CatchmentTool.Services
                         continue;
                     }
 
-                    var result = _walker.Trace(x, y);
+                    // Prefer the D8 walker on the conditioned grid when a
+                    // hierarchy is available — it succeeds far more often
+                    // than the TIN walker on real fragmented surfaces
+                    // because micro-sinks have been filled. Fall back to
+                    // TinWalker only when no hierarchy was supplied.
+                    TinWalker.TraceResult result = hierarchy != null
+                        ? hierarchy.TraceD8(x, y, _walker.SnapTolerance)
+                        : _walker.Trace(x, y);
                     int label = result.InletId;
                     var resolution = result.HowResolved;
 

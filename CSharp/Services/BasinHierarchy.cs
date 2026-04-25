@@ -24,6 +24,18 @@ namespace CatchmentTool.Services
         private readonly List<TinWalker.InletTarget> _inlets;
         private readonly IReadOnlyList<PipeBurner.PipeSegment> _pipes;
         private readonly double _trenchDepth;
+        private readonly double _maxFillDepth;
+        private readonly double _skipRadius;
+        private double[,] _conditionedElev;
+
+        /// <summary>
+        /// Conditioned elevation grid (after pipe burning + light
+        /// conditioning). Same shape as Labels. NaN where off-surface.
+        /// Available after Build() runs. Used by D8 walker.
+        /// </summary>
+        public double[,] ConditionedElev => _conditionedElev;
+
+        public int RaisedCells { get; private set; }
 
         public int Rows { get; private set; }
         public int Cols { get; private set; }
@@ -44,13 +56,17 @@ namespace CatchmentTool.Services
 
         public BasinHierarchy(TinSurface surface, List<TinWalker.InletTarget> inlets, double cellSize,
                               IReadOnlyList<PipeBurner.PipeSegment> pipes = null,
-                              double trenchDepth = 0.0)
+                              double trenchDepth = 0.0,
+                              double maxFillDepth = 0.5,
+                              double skipRadius = 10.0)
         {
             _surface = surface;
             _inlets = inlets;
             _cellSize = cellSize;
             _pipes = pipes;
             _trenchDepth = trenchDepth;
+            _maxFillDepth = maxFillDepth;
+            _skipRadius = skipRadius;
         }
 
         /// <summary>
@@ -95,6 +111,17 @@ namespace CatchmentTool.Services
                 BurnedCells = PipeBurner.Burn(
                     elev, OriginX, OriginY, _cellSize, _pipes, _trenchDepth);
             }
+
+            // Phase 1c: light conditioning. Fill micro-sinks (depth less
+            // than _maxFillDepth) so the D8 walker doesn't die in TIN
+            // noise. Skip-near-inlet leaves designed low points alone.
+            RaisedCells = 0;
+            if (_maxFillDepth > 0)
+                RaisedCells = LightCondition(elev);
+
+            // Stash the conditioned grid so external callers (e.g. the
+            // D8 walker) can use it for steepest-descent.
+            _conditionedElev = elev;
 
             Labels = new int[Rows, Cols];
             for (int r = 0; r < Rows; r++)
@@ -189,6 +216,240 @@ namespace CatchmentTool.Services
             int r = (int)Math.Round((y - OriginY) / _cellSize);
             if (r < 0 || r >= Rows || c < 0 || c >= Cols) return -1;
             return Labels[r, c];
+        }
+
+        /// <summary>
+        /// Planchon-Darboux fill with a depth cap and skip-near-inlet:
+        /// raises every cell in a basin to the saddle elevation it would
+        /// spill from, but only up to <c>_maxFillDepth</c> above its
+        /// original elevation. Cells within <c>_skipRadius</c> of any
+        /// inlet stay at original elevation (designed sinks).
+        /// Returns count of cells raised.
+        /// </summary>
+        private int LightCondition(double[,] elev)
+        {
+            var orig = (double[,])elev.Clone();
+            var visited = new bool[Rows, Cols];
+            var pq = new PriorityQueue<(int r, int c), double>();
+
+            // Seed: grid boundary cells + inlet cells.
+            for (int c = 0; c < Cols; c++)
+            {
+                if (!double.IsNaN(elev[0, c]))
+                { pq.Enqueue((0, c), elev[0, c]); visited[0, c] = true; }
+                if (!double.IsNaN(elev[Rows - 1, c]))
+                { pq.Enqueue((Rows - 1, c), elev[Rows - 1, c]); visited[Rows - 1, c] = true; }
+            }
+            for (int r = 0; r < Rows; r++)
+            {
+                if (!visited[r, 0] && !double.IsNaN(elev[r, 0]))
+                { pq.Enqueue((r, 0), elev[r, 0]); visited[r, 0] = true; }
+                if (!visited[r, Cols - 1] && !double.IsNaN(elev[r, Cols - 1]))
+                { pq.Enqueue((r, Cols - 1), elev[r, Cols - 1]); visited[r, Cols - 1] = true; }
+            }
+            for (int i = 0; i < _inlets.Count; i++)
+            {
+                int c = (int)Math.Round((_inlets[i].X - OriginX) / _cellSize);
+                int r = (int)Math.Round((_inlets[i].Y - OriginY) / _cellSize);
+                if (r < 0 || r >= Rows || c < 0 || c >= Cols) continue;
+                if (double.IsNaN(elev[r, c])) continue;
+                if (!visited[r, c])
+                { pq.Enqueue((r, c), elev[r, c]); visited[r, c] = true; }
+            }
+
+            double skipR2 = _skipRadius * _skipRadius;
+            int[] dr = { -1, 1, 0, 0 };
+            int[] dc = { 0, 0, -1, 1 };
+            int raised = 0;
+
+            while (pq.Count > 0)
+            {
+                pq.TryDequeue(out var cell, out double waterZ);
+                for (int k = 0; k < 4; k++)
+                {
+                    int nr = cell.r + dr[k];
+                    int nc = cell.c + dc[k];
+                    if (nr < 0 || nr >= Rows || nc < 0 || nc >= Cols) continue;
+                    if (visited[nr, nc]) continue;
+                    if (double.IsNaN(elev[nr, nc])) continue;
+                    visited[nr, nc] = true;
+
+                    double cellOrig = orig[nr, nc];
+
+                    // Skip-near-inlet: don't fill near designed low points.
+                    if (skipR2 > 0)
+                    {
+                        double x = OriginX + nc * _cellSize;
+                        double y = OriginY + nr * _cellSize;
+                        bool nearInlet = false;
+                        for (int i = 0; i < _inlets.Count; i++)
+                        {
+                            double dxi = x - _inlets[i].X;
+                            double dyi = y - _inlets[i].Y;
+                            if (dxi * dxi + dyi * dyi < skipR2) { nearInlet = true; break; }
+                        }
+                        if (nearInlet)
+                        {
+                            pq.Enqueue((nr, nc), cellOrig);
+                            continue;
+                        }
+                    }
+
+                    double target = Math.Max(cellOrig, waterZ);
+                    double cap = cellOrig + _maxFillDepth;
+                    if (target > cap) target = cap;
+                    if (target > cellOrig)
+                    {
+                        elev[nr, nc] = target;
+                        raised++;
+                    }
+                    pq.Enqueue((nr, nc), target);
+                }
+            }
+            return raised;
+        }
+
+        /// <summary>
+        /// D8 steepest-descent walker on the conditioned grid. Returns a
+        /// TraceResult with HowResolved=Direct if it physically reached an
+        /// inlet (within snapTol), Orphan if it stalled in a local min,
+        /// or OffSurface if it left the grid.
+        /// Uses ConditionedElev — call after Build().
+        /// </summary>
+        public TinWalker.TraceResult TraceD8(double startX, double startY,
+                                             double snapTol, int maxSteps = 5000)
+        {
+            if (_conditionedElev == null)
+                throw new InvalidOperationException(
+                    "TraceD8 requires Build() first.");
+
+            int c = (int)Math.Round((startX - OriginX) / _cellSize);
+            int r = (int)Math.Round((startY - OriginY) / _cellSize);
+            double cx = OriginX + c * _cellSize;
+            double cy = OriginY + r * _cellSize;
+
+            if (r < 0 || r >= Rows || c < 0 || c >= Cols
+                || double.IsNaN(_conditionedElev[r, c]))
+            {
+                return new TinWalker.TraceResult
+                {
+                    InletId = -1, StepCount = 0, FinalX = cx, FinalY = cy,
+                    HowResolved = TinWalker.Resolution.OffSurface, Path = null
+                };
+            }
+
+            double diag = Math.Sqrt(2.0);
+            int[] ndr = { -1, 1, 0, 0, -1, -1, 1, 1 };
+            int[] ndc = { 0, 0, -1, 1, -1, 1, -1, 1 };
+            double[] ndist = { 1.0, 1.0, 1.0, 1.0, diag, diag, diag, diag };
+
+            for (int step = 0; step < maxSteps; step++)
+            {
+                int hitId = NearestInletWithin(cx, cy, snapTol);
+                if (hitId >= 0)
+                {
+                    return new TinWalker.TraceResult
+                    {
+                        InletId = hitId, StepCount = step,
+                        FinalX = cx, FinalY = cy,
+                        HowResolved = TinWalker.Resolution.Direct, Path = null
+                    };
+                }
+
+                double curZ = _conditionedElev[r, c];
+                double bestSlope = 0.0;
+                int bestK = -1;
+                for (int k = 0; k < 8; k++)
+                {
+                    int nr = r + ndr[k];
+                    int nc = c + ndc[k];
+                    if (nr < 0 || nr >= Rows || nc < 0 || nc >= Cols) continue;
+                    double nz = _conditionedElev[nr, nc];
+                    if (double.IsNaN(nz)) continue;
+                    double slope = (curZ - nz) / (ndist[k] * _cellSize);
+                    if (slope > bestSlope) { bestSlope = slope; bestK = k; }
+                }
+                if (bestK < 0)
+                {
+                    return new TinWalker.TraceResult
+                    {
+                        InletId = -1, StepCount = step,
+                        FinalX = cx, FinalY = cy,
+                        HowResolved = TinWalker.Resolution.Orphan, Path = null
+                    };
+                }
+
+                double newX = cx + ndc[bestK] * _cellSize;
+                double newY = cy + ndr[bestK] * _cellSize;
+
+                // Inlet interception along the segment.
+                if (TryInterceptSegment(cx, cy, newX, newY, snapTol,
+                                        out int interceptId,
+                                        out double hx, out double hy))
+                {
+                    return new TinWalker.TraceResult
+                    {
+                        InletId = interceptId, StepCount = step,
+                        FinalX = hx, FinalY = hy,
+                        HowResolved = TinWalker.Resolution.Direct, Path = null
+                    };
+                }
+
+                r += ndr[bestK];
+                c += ndc[bestK];
+                cx = newX;
+                cy = newY;
+            }
+            return new TinWalker.TraceResult
+            {
+                InletId = -1, StepCount = maxSteps,
+                FinalX = cx, FinalY = cy,
+                HowResolved = TinWalker.Resolution.Orphan, Path = null
+            };
+        }
+
+        private int NearestInletWithin(double x, double y, double snap)
+        {
+            double bestD = snap;
+            int bestId = -1;
+            for (int i = 0; i < _inlets.Count; i++)
+            {
+                double dx = x - _inlets[i].X;
+                double dy = y - _inlets[i].Y;
+                double d = Math.Sqrt(dx * dx + dy * dy);
+                if (d < bestD) { bestD = d; bestId = _inlets[i].Id; }
+            }
+            return bestId;
+        }
+
+        private bool TryInterceptSegment(double sx, double sy,
+                                         double ex, double ey, double snap,
+                                         out int hitId,
+                                         out double hx, out double hy)
+        {
+            hitId = -1; hx = 0; hy = 0;
+            double dx = ex - sx, dy = ey - sy;
+            double seg2 = dx * dx + dy * dy;
+            if (seg2 < 1e-18) return false;
+            double snap2 = snap * snap;
+            double bestT = 2.0;
+            for (int i = 0; i < _inlets.Count; i++)
+            {
+                double t = ((_inlets[i].X - sx) * dx
+                            + (_inlets[i].Y - sy) * dy) / seg2;
+                if (t < 0) t = 0; else if (t > 1) t = 1;
+                double px = sx + t * dx;
+                double py = sy + t * dy;
+                double ddx = _inlets[i].X - px;
+                double ddy = _inlets[i].Y - py;
+                double d2 = ddx * ddx + ddy * ddy;
+                if (d2 < snap2 && t < bestT)
+                {
+                    bestT = t; hitId = _inlets[i].Id;
+                    hx = px; hy = py;
+                }
+            }
+            return hitId >= 0;
         }
     }
 }
