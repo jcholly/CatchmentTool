@@ -33,6 +33,9 @@ tools/harness/verify_cs/bin/
 tools/harness/verify_cs/obj/
 tools/harness/verify_cs/fixtures/
 
+# Test data (kept local only)
+test_data/
+
 # OS files
 Thumbs.db
 .DS_Store
