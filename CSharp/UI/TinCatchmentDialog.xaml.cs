@@ -383,7 +383,9 @@ namespace CatchmentTool.UI
                 Log($"[2/5] Building spillover hierarchy (priority-flood from inlets)...");
                 Log($"  Burning {pipeSegments.Count} pipes into elevation grid");
                 var hierarchy = new BasinHierarchy(
-                    surface, walkerInlets, cellSize, pipeSegments);
+                    surface, walkerInlets, cellSize, pipeSegments,
+                    maxFillDepth: _units.LightFillCap,
+                    skipRadius:   _units.InletSkipRadius);
                 double hierarchyTime = hierarchy.Build();
                 Log($"  Grid: {hierarchy.Cols} x {hierarchy.Rows} = {hierarchy.Rows * hierarchy.Cols:N0} cells");
                 Log($"  Pipe-burned cells: {hierarchy.BurnedCells:N0}");
@@ -430,19 +432,20 @@ namespace CatchmentTool.UI
                 // Ensures every inside-TIN cell ends up in a catchment
                 // (no holes in the map) and removes stair-step noise from
                 // cells-at-hull-edges getting cut off during flood.
-                int nRescued = grid.ResolveOrphansToNearestInlet(walkerInlets);
+                int nRescued = grid.ResolveOrphansToNearestInlet(
+                    walkerInlets, _units.OrphanRescueRadius);
                 if (nRescued > 0)
                     Log($"  Orphan cells reassigned to nearest inlet: {nRescued:N0}",
                         Brushes.LightGreen);
-                const double MIN_CATCHMENT_SQFT = 500.0;
                 int minCells = Math.Max(1,
-                    (int)(MIN_CATCHMENT_SQFT / (cellSize * cellSize)));
+                    (int)(_units.FragmentMergeArea / (cellSize * cellSize)));
                 int nMerged = grid.MergeSmallComponents(minCells);
                 if (nMerged > 0)
                     Log($"  Small fragments merged into neighbors: {nMerged:N0} "
-                        + $"(< {MIN_CATCHMENT_SQFT:F0} sqft)");
+                        + $"(< {_units.FragmentMergeArea:F0} {_units.AreaLabel})");
                 // Second orphan pass — tiny isolated blobs left behind.
-                int nRescued2 = grid.ResolveOrphansToNearestInlet(walkerInlets);
+                int nRescued2 = grid.ResolveOrphansToNearestInlet(
+                    walkerInlets, _units.OrphanRescueRadius);
                 if (nRescued2 > 0)
                     Log($"  Orphan cells reassigned (pass 2): {nRescued2:N0}");
                 Log("");

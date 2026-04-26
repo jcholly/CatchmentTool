@@ -54,11 +54,28 @@ namespace CatchmentTool.Services
         /// <summary>Cells lowered by pipe burning. Zero if no pipes supplied.</summary>
         public int BurnedCells { get; private set; }
 
+        /// <param name="surface">Civil 3D TIN surface.</param>
+        /// <param name="inlets">Inlet locations with IDs.</param>
+        /// <param name="cellSize">Grid cell size in drawing units.</param>
+        /// <param name="pipes">Optional pipe segments to burn into the elev grid.</param>
+        /// <param name="trenchDepth">Trench depth in drawing units (passed to PipeBurner).</param>
+        /// <param name="maxFillDepth">
+        /// Cap on how high light-conditioning may raise any single cell, in
+        /// drawing units. Pass 0 to skip light-conditioning entirely.
+        /// Caller is responsible for choosing a value appropriate for the
+        /// drawing's unit system (e.g. 0.5 ft / 0.15 m).
+        /// </param>
+        /// <param name="skipRadius">
+        /// Cells within this radius of any inlet are exempt from light-
+        /// conditioning (preserves designed low points), in drawing units.
+        /// Pass 0 to disable the inlet-skip behavior. Caller chooses a
+        /// unit-appropriate value (e.g. 10 ft / 3 m).
+        /// </param>
         public BasinHierarchy(TinSurface surface, List<TinWalker.InletTarget> inlets, double cellSize,
                               IReadOnlyList<PipeBurner.PipeSegment> pipes = null,
                               double trenchDepth = 0.0,
-                              double maxFillDepth = 0.5,
-                              double skipRadius = 10.0)
+                              double maxFillDepth = 0.0,
+                              double skipRadius = 0.0)
         {
             _surface = surface;
             _inlets = inlets;
@@ -224,8 +241,16 @@ namespace CatchmentTool.Services
         /// spill from, but only up to <c>_maxFillDepth</c> above its
         /// original elevation. Cells within <c>_skipRadius</c> of any
         /// inlet stay at original elevation (designed sinks).
-        /// Returns count of cells raised.
+        ///
+        /// Note: this is intentionally NOT canonical priority-flood. Both
+        /// the depth cap and skip-near-inlet enqueue cells with priorities
+        /// below the parent's water level, violating the strict-monotonic
+        /// invariant. The result is "leaky" filling — designed outlets and
+        /// hard-capped saddles let water escape downstream at lower-than-
+        /// flood elevation, which matches "light" conditioning intent. Do
+        /// not "fix" the violations without rethinking the semantics.
         /// </summary>
+        /// <returns>Count of cells whose elevation was raised.</returns>
         private int LightCondition(double[,] elev)
         {
             var orig = (double[,])elev.Clone();
@@ -257,7 +282,41 @@ namespace CatchmentTool.Services
                 { pq.Enqueue((r, c), elev[r, c]); visited[r, c] = true; }
             }
 
-            double skipR2 = _skipRadius * _skipRadius;
+            // Precompute a per-cell near-inlet mask so the inner loop is
+            // O(1) instead of O(N inlets). One pass paints a disk around
+            // each inlet — total cost O(N * r²) where r = skipRadius/cellSize,
+            // typically << R*C*N.
+            bool[,] nearInletMask = null;
+            if (_skipRadius > 0)
+            {
+                nearInletMask = new bool[Rows, Cols];
+                int rad = (int)Math.Ceiling(_skipRadius / _cellSize);
+                double skipR2 = _skipRadius * _skipRadius;
+                for (int i = 0; i < _inlets.Count; i++)
+                {
+                    double inletX = _inlets[i].X;
+                    double inletY = _inlets[i].Y;
+                    int ic = (int)Math.Round((inletX - OriginX) / _cellSize);
+                    int ir = (int)Math.Round((inletY - OriginY) / _cellSize);
+                    int r0 = Math.Max(0, ir - rad);
+                    int r1 = Math.Min(Rows - 1, ir + rad);
+                    int c0 = Math.Max(0, ic - rad);
+                    int c1 = Math.Min(Cols - 1, ic + rad);
+                    for (int r = r0; r <= r1; r++)
+                    {
+                        double dy = (OriginY + r * _cellSize) - inletY;
+                        double dy2 = dy * dy;
+                        for (int c = c0; c <= c1; c++)
+                        {
+                            if (nearInletMask[r, c]) continue;
+                            double dx = (OriginX + c * _cellSize) - inletX;
+                            if (dx * dx + dy2 < skipR2)
+                                nearInletMask[r, c] = true;
+                        }
+                    }
+                }
+            }
+
             int[] dr = { -1, 1, 0, 0 };
             int[] dc = { 0, 0, -1, 1 };
             int raised = 0;
@@ -277,22 +336,10 @@ namespace CatchmentTool.Services
                     double cellOrig = orig[nr, nc];
 
                     // Skip-near-inlet: don't fill near designed low points.
-                    if (skipR2 > 0)
+                    if (nearInletMask != null && nearInletMask[nr, nc])
                     {
-                        double x = OriginX + nc * _cellSize;
-                        double y = OriginY + nr * _cellSize;
-                        bool nearInlet = false;
-                        for (int i = 0; i < _inlets.Count; i++)
-                        {
-                            double dxi = x - _inlets[i].X;
-                            double dyi = y - _inlets[i].Y;
-                            if (dxi * dxi + dyi * dyi < skipR2) { nearInlet = true; break; }
-                        }
-                        if (nearInlet)
-                        {
-                            pq.Enqueue((nr, nc), cellOrig);
-                            continue;
-                        }
+                        pq.Enqueue((nr, nc), cellOrig);
+                        continue;
                     }
 
                     double target = Math.Max(cellOrig, waterZ);

@@ -19,12 +19,19 @@ namespace CatchmentTool.Services
         /// <summary>Short area unit label ("sq ft" or "sq m").</summary>
         public string AreaLabel { get; private set; }
 
-        // Recommended defaults
+        // User-facing UI defaults
         public double DefaultCellSize { get; private set; }
         public double DefaultSnapDistance { get; private set; }
         public double DefaultMinArea { get; private set; }
 
         public double DefaultBurnDepth { get; private set; }
+
+        // Internal tolerances for the TIN catchment pipeline. Not user-
+        // configurable; values are unit-correct equivalents (~3:1 ft:m).
+        public double LightFillCap { get; private set; }
+        public double InletSkipRadius { get; private set; }
+        public double OrphanRescueRadius { get; private set; }
+        public double FragmentMergeArea { get; private set; }
 
         /// <summary>
         /// Detect units from the active document.
@@ -56,6 +63,11 @@ namespace CatchmentTool.Services
                 units.DefaultMinArea = 10.0;            // ~100 sq ft
 
                 units.DefaultBurnDepth = 1.0;           // ~3 ft
+
+                units.LightFillCap        = 0.15;       // ~0.5 ft
+                units.InletSkipRadius     = 3.0;        // ~10 ft
+                units.OrphanRescueRadius  = 45.0;       // ~150 ft
+                units.FragmentMergeArea   = 45.0;       // ~500 sq ft
             }
             else
             {
@@ -66,6 +78,11 @@ namespace CatchmentTool.Services
                 units.DefaultMinArea = 100.0;
 
                 units.DefaultBurnDepth = 3.0;
+
+                units.LightFillCap        = 0.5;
+                units.InletSkipRadius     = 10.0;
+                units.OrphanRescueRadius  = 150.0;
+                units.FragmentMergeArea   = 500.0;
             }
 
             return units;
