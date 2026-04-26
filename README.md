@@ -1,112 +1,122 @@
-# Civil 3D Catchment Delineation Tool
+# Civil 3D Catchment Delineation Tool (v2)
 
-Automated catchment delineation using WhiteboxTools integrated with AutoCAD Civil 3D 2026.
+Automated catchment delineation for small developed sites — fully integrated with Civil 3D as a NETLOAD plugin. Pick a TIN surface and a pipe network, check the inlets you want as pour points, and the tool emits one native Civil 3D `Catchment` object per checked structure.
 
-## Overview
+## Commands
 
-Three commands cover the full storm drainage catchment workflow:
+| Command          | What it does                                                                                                                                                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DELINEATE`      | **Tuned auto-delineation.** Opens a dialog: pick TIN, pick pipe network, check pour-point structures, click Run. The pipeline does its thing and emits Civil 3D `Catchment` objects, each linked to its outlet structure for downstream stormwater analysis. |
+| `MAKECATCHMENTS` | **Linework → Catchment objects.** Select existing closed polylines you've drawn or imported. Each polyline becomes a Civil 3D `Catchment`, and any pipe-network structure inside it is auto-assigned as the outlet.                                          |
 
-| Command | Description |
-|---------|-------------|
-| `CATCHMENTTIN` | **TIN-based delineation** — traces steepest descent directly on TIN surface (no rasterization); fast and accurate for small to medium catchments; creates Civil 3D Catchment objects for selected inlet structures |
-| `CATCHMENTAUTO` | **Automated delineation** — exports TIN surface + inlet structures, runs WhiteboxTools hydrological analysis, and imports Civil 3D Catchment objects linked to their outlet structures; for complex hydrology or large-scale watersheds |
-| `MAKECATCHMENTS` | **Linework to Catchments** — select closed polylines already in the drawing; assigns the pipe network structure found inside each polygon as the outlet and creates Civil 3D Catchment objects |
+The plugin's algorithm parameters are baked in from offline tuning — there is no settings panel. To re-tune, run the offline tuner against new fixtures and update [`CSharp/Services/TunedDefaults.cs`](CSharp/Services/TunedDefaults.cs).
 
-## Typical Workflows
+## How `DELINEATE` works
 
-### Workflow A — TIN-based delineation (fast, direct)
-1. Type `CATCHMENTTIN`
-2. Select TIN surface and pipe network in the dialog
-3. Select which inlet structures to include as outlets (checkboxes)
-4. Adjust grid cell size and snap tolerance if needed (defaults: 1 ft, 5 ft)
-5. Click **Run** — delineation traces directly on TIN surface (~10 seconds)
-6. Civil 3D Catchment objects are created, each linked to its inlet structure
-7. **Best for:** small to medium sites with a single TIN surface and designed drainage
+The pipeline runs in 8 phases, all in-process (no Python, no WhiteboxTools):
 
-#### How CATCHMENTTIN resolves stuck drops (spillover routing)
+1. **Boundary** — buffered convex hull around selected structures, clipped to the TIN convex hull.
+2. **Rasterize** — sample the TIN to a square grid (default 13.2 ft cells per tuning).
+3. **Pipe-burn** — lower the rasterized surface 1.5 ft along each pipe alignment (Saunders 1999 / Lindsay 2016 hydro-conditioning). Source TIN is never modified.
+4. **Condition** — protect pond cells, snap inlets to local minima, fill remaining depressions.
+5. **D8 routing** — each cell traces steepest descent until it reaches a labeled inlet cell or hits the data boundary.
+6. **Voronoi fallback** — multi-source Dijkstra from labeled cells fills cells D8 didn't reach. **Edge cells whose flow runs off the TIN boundary are excluded** (not force-assigned to a nearby inlet).
+7. **Pipe-network union** — for each user-selected pond, walk the pipe graph upstream and union all upstream inlet cells into the pond's label.
+8. **Polygonize + smooth** — apply a 3×3 majority filter to the labeled raster (topology-aware smoothing — adjacent polygons tile by construction, no gaps or overlaps), then marching-squares boundary trace, then RDP simplify, then 2 Chaikin iterations for plan presentability.
 
-Every grid cell is a virtual water drop that walks steepest descent on the TIN. When a drop cannot physically reach an inlet (flat triangle, micro-sink, off-surface), `CATCHMENTTIN` no longer falls back to nearest-inlet guessing. Instead, a **priority-flood from the inlets** (Barnes, Lehman & Mulla 2014) precomputes, for every cell on the surface, the inlet that rising water would spill toward. Stuck drops are resolved via this hierarchy — topologically correct, independent of distance.
+For each user-selected structure (one catchment per pour point per Tier 1 #1 of the result criteria), the tool calls `Catchment.Create(name, styleId, groupId, surfaceId, point3dCollection)` with Z draped from the TIN, and links the catchment to its outlet structure via `ReferencePipeNetworkStructureId`.
 
-The dialog log reports a resolution breakdown so you can judge the answer's quality:
+## Workflow
 
-```
-Resolved to inlets: 248,113
-  Direct (walker arrived)   : 231,440  (93.3%)
-  Spillover (rising water)  :  15,889  ( 6.4%)
-  Off-surface               :     612
-  Orphan (no inlet reach)   :     172
-```
+### `DELINEATE` — tuned auto-delineation
 
-A high spillover share (>30%) or non-zero orphan count indicates micro-sinks, missing inlets, or the need for pipe burning — planned in a later phase.
+1. Type `DELINEATE` in Civil 3D.
+2. Pick the TIN surface from the dropdown.
+3. Pick the pipe network from the dropdown.
+4. The structures table populates with checkboxes (every structure checked by default). Uncheck any you don't want as a pour point. **One catchment per checked structure.**
+5. Click **Run Delineation**.
+6. Civil 3D `Catchment` objects appear in a new Catchment Group named `CT_<HHmmss>`, each linked to its outlet structure.
 
-### Workflow B — Automated with WhiteboxTools (complex hydrology)
-1. Type `CATCHMENTAUTO`
-2. Select surface and pipe network in the dialog
-3. Configure advanced settings (cell size, snap distance, breach options, pipe burning)
-4. Click **Run** — delineation runs automatically via WhiteboxTools (~1-5 minutes)
-5. Civil 3D Catchment objects are created, each linked to its inlet structure
-6. **Best for:** large sites, complex drainage patterns, or when WhiteboxTools analysis is needed
+### `MAKECATCHMENTS` — convert existing polylines
 
-### Workflow C — From existing linework
-1. Draw or import closed polylines representing your catchment boundaries
-2. Type `MAKECATCHMENTS`
-3. Select the polylines, then select the reference surface
-4. The tool finds the pipe network structure inside each polygon and creates Civil 3D Catchment objects with outlets assigned
-5. **Best for:** manual refinement of automated boundaries or importing external catchment definitions
+1. Draw or import closed polylines that represent your catchment boundaries.
+2. Type `MAKECATCHMENTS` in Civil 3D.
+3. Select the polylines.
+4. Pick the reference surface.
+5. The tool finds the structure inside each polyline (if any) and creates `Catchment` objects with that structure as the outlet.
 
-## Project Structure
+## Project structure
 
 ```
 CatchmentTool/
-├── CSharp/                          # Civil 3D .NET Plugin
+├── CSharp/
+│   ├── CatchmentTool.csproj         # net8.0-windows, Civil 3D 2026
 │   ├── Commands/
-│   │   ├── CatchmentCommands.cs     # CATCHMENTAUTO + MAKECATCHMENTS
-│   │   └── TinCatchmentCommand.cs   # CATCHMENTTIN
+│   │   ├── DelineateCommand.cs      # [CommandMethod("DELINEATE")]
+│   │   └── CatchmentCommands.cs     # [CommandMethod("MAKECATCHMENTS")]
+│   ├── UI/
+│   │   ├── DelineateDialog.xaml     # pour-point selection, no settings
+│   │   └── DelineateDialog.xaml.cs
 │   ├── Services/
-│   │   ├── TinWalker.cs             # Steepest descent tracer on TIN
-│   │   ├── BasinHierarchy.cs        # Priority-flood spillover routing
-│   │   ├── WatershedGrid.cs         # Regular grid + flow tracing
-│   │   ├── SurfaceExporter.cs       # TIN surface → DEM raster
-│   │   ├── StructureExtractor.cs    # Pipe network → inlet points
-│   │   ├── CatchmentCreator.cs      # Polygons → Civil 3D Catchments
-│   │   └── PythonEnvironment.cs     # Python discovery + execution
-│   └── UI/
-│       ├── TinCatchmentDialog.xaml  # CATCHMENTTIN dialog
-│       ├── TinCatchmentDialog.xaml.cs
-│       ├── AutoCatchmentDialog.xaml # CATCHMENTAUTO dialog
-│       └── AutoCatchmentDialog.xaml.cs
-├── Python/                          # WhiteboxTools processing
-│   ├── catchment_delineation.py     # Main delineation pipeline
-│   ├── crs_utils.py                 # CRS resolution
-│   ├── validation.py                # Pour point validation
-│   └── requirements.txt
-├── Distribution/                    # Packaging and installation
+│   │   ├── TunedDefaults.cs         # baked-in tuned parameters
+│   │   ├── CatchmentEmitter.cs      # emit Civil 3D Catchment objects
+│   │   ├── CatchmentCreator.cs      # used by MAKECATCHMENTS (legacy)
+│   │   ├── StructureExtractor.cs    # used by MAKECATCHMENTS (legacy)
+│   │   └── DrawingUnits.cs          # imperial / metric detection
+│   └── Core/                        # pure algorithm (no Civil 3D deps)
+│       ├── TuningParameters.cs
+│       ├── Common.cs                # Vec2, Bounds
+│       ├── Geometry/                # Polygon, RDP, Chaikin, Sutherland-Hodgman, MarchingSquares
+│       ├── Surface/                 # Tin, Grid
+│       ├── Network/                 # Structure, Pipe, PipeNetwork
+│       ├── Pipeline/                # 8 phases
+│       ├── LandXml/                 # offline LandXML reader
+│       ├── Output/                  # GeoJSON + PNG writers
+│       └── Grading/                 # composite v2 scoring (8 components)
+├── Distribution/
 │   └── CatchmentTool.bundle/        # AutoCAD ApplicationPlugins bundle
-└── INSTALL.md
+├── tools/
+│   └── harness/                     # offline grading + tuning harness (Python prototypes)
+├── README.md
+├── INSTALL.md
+└── CLAUDE.md
 ```
 
 ## Requirements
 
-**Civil 3D:** AutoCAD Civil 3D 2026, .NET 8.0
+- **Civil 3D 2026** (or 2025 with .NET 8 enabled)
+- **Windows 10/11** with .NET 8 runtime
 
-**Python** (for `CATCHMENTAUTO` only): Python 3.10+
-```
-pip install -r Python/requirements.txt
-```
+No Python dependency in v2 — the WhiteboxTools-based pipeline was replaced by an in-process C# pipeline.
 
-## Installation
+## Building
 
 ```powershell
-# Build the C# plugin (needs Civil 3D 2026 installed)
+# From the repo root, with Civil 3D 2026 installed at the default location:
 dotnet build CSharp/CatchmentTool.csproj -c Release
 
-# Copy the bundle to ApplicationPlugins
-Copy-Item -Recurse -Force Distribution\CatchmentTool.bundle `
-    "$env:ProgramData\Autodesk\ApplicationPlugins\"
+# Custom Civil 3D path:
+dotnet build CSharp/CatchmentTool.csproj -c Release -p:Civil3DPath="D:\Autodesk\AutoCAD 2026"
 ```
 
-See [INSTALL.md](INSTALL.md) for release-ZIP install, Python setup, and troubleshooting.
+## Loading in Civil 3D
 
-## License
+```
+NETLOAD
+```
 
-Internal tool — Autodesk Water Infrastructure.
+Then select `CSharp/bin/CatchmentTool.dll`. Type `DELINEATE` or `MAKECATCHMENTS`.
+
+For permanent install, see [INSTALL.md](INSTALL.md).
+
+## Tuning
+
+Algorithm parameters were tuned offline using random sampling × multi-seed × 17 fixtures with composite v2 grading. The winning configuration is hard-coded in [`CSharp/Services/TunedDefaults.cs`](CSharp/Services/TunedDefaults.cs).
+
+To re-tune for a different project distribution: collect representative LandXML exports, drop them in `test_data/landxml/`, run the tuner, and update `TunedDefaults.V2` with the winning params.
+
+## v1 → v2 changes
+
+The v1 architecture had three commands (`CATCHMENTTIN`, `CATCHMENTAUTO`, `MAKECATCHMENTS`), used WhiteboxTools via Python for complex hydrology, and had a TIN-direct walker (`TinWalker`) plus priority-flood spillover (`BasinHierarchy`). v2 collapses to two commands (`DELINEATE`, `MAKECATCHMENTS`), removes the Python/WhiteboxTools dependency, and uses a single tuned pipeline that benchmarks better on real developed sites.
+
+The v1 algorithm code is preserved in git history (`git checkout master~1`). The v1 Python prototypes are on the `wip/python-prototypes-2026-04-26` branch.

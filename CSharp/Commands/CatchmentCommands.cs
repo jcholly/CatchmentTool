@@ -9,7 +9,6 @@ using Autodesk.AutoCAD.Runtime;
 using Autodesk.Civil.ApplicationServices;
 using Autodesk.Civil.DatabaseServices;
 using CatchmentTool.Services;
-using CatchmentTool.UI;
 
 using CivilSurface = Autodesk.Civil.DatabaseServices.Surface;
 
@@ -20,28 +19,7 @@ namespace CatchmentTool.Commands
     public class CatchmentCommands
     {
         // =====================================================================
-        // COMMAND 1: CATCHMENTAUTO
-        // Opens the automated delineation dialog (export surface + inlets,
-        // run WhiteboxTools, import Civil 3D Catchment objects).
-        // =====================================================================
-
-        [CommandMethod("CATCHMENTAUTO")]
-        public void CatchmentAutoDialog()
-        {
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            try
-            {
-                var dialog = new AutoCatchmentDialog(doc);
-                Application.ShowModalWindow(dialog);
-            }
-            catch (System.Exception ex)
-            {
-                doc.Editor.WriteMessage($"\nError opening dialog: {ex.Message}\n");
-            }
-        }
-
-        // =====================================================================
-        // COMMAND 2: MAKECATCHMENTS
+        // COMMAND: MAKECATCHMENTS
         // Select existing closed polylines → find the pipe network structure
         // inside each polygon → create Civil 3D Catchment objects with that
         // structure assigned as the outlet.

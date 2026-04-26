@@ -5,7 +5,7 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
-    <ImplicitUsings>disable</ImplicitUsings>
+    <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>CatchmentTool</AssemblyName>
     <RootNamespace>CatchmentTool</RootNamespace>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -60,12 +60,10 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
-  <!-- Copy Python scripts to output directory alongside the DLL -->
-  <ItemGroup>
-    <None Include="..\Python\*.py" CopyToOutputDirectory="PreserveNewest" Link="Python\%(Filename)%(Extension)" />
-    <None Include="..\Python\requirements.txt" CopyToOutputDirectory="PreserveNewest" Link="Python\requirements.txt" />
-    <None Include="..\Python\config_template.json" CopyToOutputDirectory="PreserveNewest" Link="Python\config_template.json" />
-  </ItemGroup>
+  <!--
+    No Python dependency in v2 — the WhiteboxTools-based pipeline was replaced
+    by the in-process C# pipeline under CSharp/Core/. The DLL is self-contained.
+  -->
 
 </Project>
 
