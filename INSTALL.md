@@ -1,111 +1,57 @@
-# Installation Guide - Civil 3D Catchment Delineation Tool
+# Installation
 
-## Prerequisites
+## Quick install (NETLOAD, per-session)
 
-- **Civil 3D:** AutoCAD Civil 3D 2026
-- **Python:** 3.10 or later ([python.org/downloads](https://www.python.org/downloads/))
-- **.NET 8.0 SDK** (for building from source only)
+1. Build the plugin:
+   ```powershell
+   dotnet build CSharp/CatchmentTool.csproj -c Release
+   ```
+2. In Civil 3D, type `NETLOAD` and select `CSharp/bin/CatchmentTool.dll`.
+3. Type `DELINEATE` (auto-delineation) or `MAKECATCHMENTS` (linework → catchments).
 
----
+The DLL stays loaded for the current Civil 3D session only.
 
-## Option A: Install from Release ZIP (recommended for end users)
+## Permanent install (ApplicationPlugins bundle)
 
-1. Download the latest `CatchmentTool-v*.zip` from the [Releases](https://github.com/jcholly/CatchmentTool/releases) page
-2. Extract it anywhere
-3. Right-click **Install.bat** → **Run as administrator**
-   - Installs Python dependencies and copies the plugin bundle to ApplicationPlugins
-   - Alternatively, right-click **Install-CatchmentTool.ps1** → **Run with PowerShell** (better error messages)
-4. Start (or restart) Civil 3D
+The repo's `Distribution/CatchmentTool.bundle/` is an AutoCAD ApplicationPlugins bundle. Drop a copy in:
 
-## Option B: Build from Source (developers)
+```
+%PROGRAMDATA%\Autodesk\ApplicationPlugins\
+```
+
+Civil 3D auto-loads the bundle on startup; commands are available without `NETLOAD`.
+
+## Custom Civil 3D path
+
+By default the build references `C:\Program Files\Autodesk\AutoCAD 2026`. Override:
 
 ```powershell
-# Clone the repo
-git clone https://github.com/jcholly/CatchmentTool.git
-cd CatchmentTool
-
-# Install Python dependencies
-pip install -r Python/requirements.txt
-
-# Build the C# plugin
-dotnet build CSharp/CatchmentTool.csproj -c Release
-
-# Copy the build output + Python scripts to ApplicationPlugins
-# (adjust paths for your Civil 3D install)
-Copy-Item -Recurse -Force Distribution\CatchmentTool.bundle `
-    "$env:ProgramData\Autodesk\ApplicationPlugins\"
+dotnet build CSharp/CatchmentTool.csproj -c Release -p:Civil3DPath="D:\Autodesk\AutoCAD 2026"
 ```
 
-> **Note:** The C# build requires Civil 3D 2026 DLLs. If Civil 3D is not at the default path, set the environment variable `CIVIL3D_PATH` or pass it directly:
-> ```powershell
-> dotnet build CSharp/CatchmentTool.csproj -c Release -p:Civil3DPath="D:\Your\Civil3D\Path"
-> ```
+Or set `CIVIL3D_PATH` as an environment variable before building.
 
----
+## Requirements
 
-## Python Dependencies on Windows
+- Civil 3D 2026 (or 2025+ with .NET 8 enabled)
+- Windows 10/11
+- .NET 8 SDK (build only — runtime is bundled with Civil 3D 2026)
 
-The GIS stack (`rasterio`, `fiona`, `geopandas`) can be tricky to install on Windows via pip alone. If `pip install` fails with compilation errors:
+No Python dependency in v2.
 
-**Option 1 — conda-forge (most reliable):**
-```
-conda install -c conda-forge rasterio fiona geopandas shapely whitebox numpy pyproj
-```
+## Verifying the install
 
-**Option 2 — Pre-built wheels:**
-Download wheels from [Christoph Gohlke's page](https://github.com/cgohlke/geospatial-wheels/) and install manually:
-```
-pip install rasterio-*.whl fiona-*.whl
-pip install geopandas shapely whitebox numpy pyproj
-```
+After NETLOAD:
 
----
+1. Type `DELINEATE` — the dialog should open with TIN surface and pipe network dropdowns populated.
+2. Type `MAKECATCHMENTS` — should prompt to select polylines.
 
-## Verify Installation
+If the commands aren't recognized, check that the DLL is loaded: `(arx)` lists loaded native libs but for managed DLLs you can verify with `NETUNLOAD CatchmentTool` (errors if not loaded).
 
-1. Open Civil 3D 2026
-2. Open a drawing with a TIN surface and pipe network
-3. Type `CATCHMENTAUTO` and press Enter
-4. The delineation dialog should appear
+## Troubleshooting build errors
 
----
-
-## Available Commands
-
-| Command | Description |
-|---------|-------------|
-| `CATCHMENTTIN` | TIN-native delineation: steepest descent from every grid cell, with priority-flood spillover routing for drops stuck in micro-sinks. Fast, topologically correct for designed small sites. |
-| `CATCHMENTAUTO` | Raster delineation via WhiteboxTools (D8 flow accumulation). Best for larger sites or complex hydrology; requires Python. |
-| `MAKECATCHMENTS` | Select existing closed polylines and convert them to Civil 3D Catchment objects with outlet structures assigned. |
-
----
-
-## Troubleshooting
-
-### Python not found
-The tool searches for Python in this order: bundled Python, `py` launcher, `python` on PATH, common install locations. Make sure Python 3.10+ is installed. On Windows, the `py` launcher (installed by default with Python) is the most reliable method.
-
-### WhiteboxTools errors
-Verify WhiteboxTools is installed:
-```powershell
-python -c "import whitebox; wbt = whitebox.WhiteboxTools(); print(wbt.version())"
-```
-
-### Plugin not loading
-Check that the bundle exists at:
-```
-C:\ProgramData\Autodesk\ApplicationPlugins\CatchmentTool.bundle\
-```
-The folder must contain `Contents\CatchmentTool.dll`. If the DLL is missing, you need to build from source or download a release ZIP.
-
-### "No inlet structures found"
-The tool looks for structures with part families containing: inlet, catch basin, area drain, curb inlet, grate, etc. If your structures use different naming, modify the filter in `StructureExtractor.cs`.
-
----
-
-## Uninstalling
-
-Run `Uninstall.bat` from the distribution, or manually delete:
-```
-C:\ProgramData\Autodesk\ApplicationPlugins\CatchmentTool.bundle\
-```
+| Error                                                                                        | Fix                                                                                                              |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `error MSB3245: Could not resolve this reference. Could not locate the assembly "AeccDbMgd"` | Civil 3D path is wrong. Set `-p:Civil3DPath="..."` or `CIVIL3D_PATH`.                                            |
+| `error CS0246: The type or namespace name 'Catchment' could not be found`                    | `AeccDbMgd.dll` not referenced — check the Civil 3D path resolves to a directory containing `C3D/AeccDbMgd.dll`. |
+| `error NU1100: Unable to find package 'Newtonsoft.Json'`                                     | Restore: `dotnet restore CSharp/CatchmentTool.csproj`.                                                           |
