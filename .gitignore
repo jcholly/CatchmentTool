@@ -36,6 +36,14 @@ tools/harness/verify_cs/fixtures/
 # Test data (kept local only)
 test_data/
 
+# Local scratch files
+testing*.xml
+INFODRAINAGE*/
+*.zip
+Park_Hill_*/
+REW_*/
+tests/
+
 # OS files
 Thumbs.db
 .DS_Store

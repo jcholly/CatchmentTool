@@ -172,7 +172,7 @@ namespace CatchmentTool.UI
             {
                 btnRun.IsEnabled = false;
                 txtStatus.Text = "Running…";
-                progress.Visibility = Visibility.Visible;
+                progress.Visibility = System.Windows.Visibility.Visible;
                 progress.IsIndeterminate = true;
                 Run(surf.Id, net.Id, selected);
             }
@@ -182,7 +182,7 @@ namespace CatchmentTool.UI
             }
             finally
             {
-                progress.Visibility = Visibility.Collapsed;
+                progress.Visibility = System.Windows.Visibility.Collapsed;
                 txtStatus.Text = "Done.";
                 btnRun.IsEnabled = true;
             }
@@ -225,10 +225,10 @@ namespace CatchmentTool.UI
         private static Tin ReadTin(TinSurface surf)
         {
             var verts = new List<TinVertex>();
-            var indexById = new Dictionary<long, int>();
+            var indexByLoc = new Dictionary<(double, double), int>();
             foreach (TinSurfaceVertex v in surf.Vertices)
             {
-                indexById[v.VertexNumber] = verts.Count;
+                indexByLoc[(v.Location.X, v.Location.Y)] = verts.Count;
                 verts.Add(new TinVertex(v.Location.X, v.Location.Y, v.Location.Z));
             }
             var tris = new List<TinTriangle>();
@@ -236,9 +236,9 @@ namespace CatchmentTool.UI
             {
                 try
                 {
-                    int a = indexById[t.Vertex1.VertexNumber];
-                    int b = indexById[t.Vertex2.VertexNumber];
-                    int c = indexById[t.Vertex3.VertexNumber];
+                    int a = indexByLoc[(t.Vertex1.Location.X, t.Vertex1.Location.Y)];
+                    int b = indexByLoc[(t.Vertex2.Location.X, t.Vertex2.Location.Y)];
+                    int c = indexByLoc[(t.Vertex3.Location.X, t.Vertex3.Location.Y)];
                     tris.Add(new TinTriangle(a, b, c));
                 }
                 catch { }

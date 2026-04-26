@@ -85,14 +85,26 @@ namespace CatchmentTool.Services
 
         private static ObjectId GetOrCreateGroup(CivilDocument civilDoc, Transaction tr, string name)
         {
-            try { return civilDoc.CatchmentGroups.Add(name); }
-            catch (AcadException) { /* exists */ }
             try
             {
-                foreach (ObjectId gid in civilDoc.CatchmentGroups)
+                var prop = civilDoc.GetType().GetProperty("CatchmentGroups");
+                if (prop != null)
                 {
-                    var g = (CatchmentGroup)tr.GetObject(gid, OpenMode.ForRead);
-                    if (g.Name == name) return gid;
+                    var groups = prop.GetValue(civilDoc);
+                    if (groups != null)
+                    {
+                        var addMethod = groups.GetType().GetMethod("Add", new[] { typeof(string) });
+                        if (addMethod != null)
+                        {
+                            var r = addMethod.Invoke(groups, new object[] { name });
+                            if (r is ObjectId id && !id.IsNull) return id;
+                        }
+                        foreach (ObjectId gid in (System.Collections.IEnumerable)groups)
+                        {
+                            var g = (CatchmentGroup)tr.GetObject(gid, OpenMode.ForRead);
+                            if (g.Name == name) return gid;
+                        }
+                    }
                 }
             }
             catch { }
