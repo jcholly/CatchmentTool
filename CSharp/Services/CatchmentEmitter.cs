@@ -26,7 +26,8 @@ namespace CatchmentTool.Services
     /// </summary>
     public static class CatchmentEmitter
     {
-        public static int Emit(Document doc, ObjectId surfaceId, ObjectId networkId,
+        public static int Emit(Document doc, ObjectId surfaceId,
+            Dictionary<string, ObjectId> handleToNetworkId,
             IReadOnlyList<CatchmentTool2.Network.Structure> structures,
             PipelineResult result, Dictionary<string, ObjectId> handleToObjectId,
             Action<string, Brush> log)
@@ -52,6 +53,7 @@ namespace CatchmentTool.Services
                 {
                     var ct = (Catchment)tr.GetObject(catchId, OpenMode.ForWrite);
                     try { ct.Name = $"CT_{c.StructureId}"; } catch { }
+                    ObjectId networkId = handleToNetworkId.GetValueOrDefault(c.StructureId, ObjectId.Null);
                     SetReferences(ct, surfaceId, networkId,
                         handleToObjectId.GetValueOrDefault(c.StructureId, ObjectId.Null), tr);
                 }

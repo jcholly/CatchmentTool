@@ -20,12 +20,6 @@ using CatchmentTool2.Surface;
 
 namespace CatchmentTool.UI
 {
-    /// <summary>
-    /// Pour-point selection dialog. Picks a TIN, a pipe network, and which
-    /// structures to delineate as catchment outlets. Runs the tuned v2 pipeline
-    /// (cell_size=13.2 ft, depression=Fill, pipe-burn 1.5 ft, edge off-site
-    /// exclusion, topology-aware smoothing). Parameters are baked in — no UI.
-    /// </summary>
     public partial class DelineateDialog : Window
     {
         private readonly Document _doc;
@@ -33,7 +27,6 @@ namespace CatchmentTool.UI
         private readonly Editor _ed;
         private readonly DrawingUnits _units;
         private List<SurfaceItem> _surfaces;
-        private List<NetworkItem> _networks;
         private ObservableCollection<StructureRow> _structures;
 
         public DelineateDialog(Document doc)
@@ -45,7 +38,6 @@ namespace CatchmentTool.UI
             _units = DrawingUnits.Detect(doc);
             _structures = new ObservableCollection<StructureRow>();
             lstStructures.ItemsSource = _structures;
-            cmbNetwork.SelectionChanged += (s, e) => LoadStructures();
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -54,7 +46,6 @@ namespace CatchmentTool.UI
             Log("Pour-point selection only. Algorithm parameters are baked in from tuning.", Brushes.Gray);
             Log("");
             LoadSurfaces();
-            LoadNetworks();
             LoadStructures();
         }
 
@@ -77,62 +68,53 @@ namespace CatchmentTool.UI
             Log($"Found {_surfaces.Count} TIN surface(s).", Brushes.LightGray);
         }
 
-        private void LoadNetworks()
-        {
-            _networks = new List<NetworkItem>();
-            var civilDoc = CivilApplication.ActiveDocument;
-            using (var tr = _db.TransactionManager.StartTransaction())
-            {
-                foreach (ObjectId id in civilDoc.GetPipeNetworkIds())
-                {
-                    var n = tr.GetObject(id, OpenMode.ForRead) as Autodesk.Civil.DatabaseServices.Network;
-                    if (n != null) _networks.Add(new NetworkItem { Id = id, Name = n.Name });
-                }
-                tr.Commit();
-            }
-            cmbNetwork.ItemsSource = _networks;
-            cmbNetwork.DisplayMemberPath = "Name";
-            if (_networks.Count > 0) cmbNetwork.SelectedIndex = 0;
-            Log($"Found {_networks.Count} pipe network(s).", Brushes.LightGray);
-        }
-
         private void LoadStructures()
         {
             _structures.Clear();
-            if (cmbNetwork.SelectedItem is not NetworkItem net) { UpdateCount(); return; }
+            var civilDoc = CivilApplication.ActiveDocument;
             using (var tr = _db.TransactionManager.StartTransaction())
             {
-                var network = (Autodesk.Civil.DatabaseServices.Network)tr.GetObject(net.Id, OpenMode.ForRead);
-                var hasDownstream = new HashSet<string>();
-                foreach (ObjectId pid in network.GetPipeIds())
+                foreach (ObjectId netId in civilDoc.GetPipeNetworkIds())
                 {
-                    var p = (Autodesk.Civil.DatabaseServices.Pipe)tr.GetObject(pid, OpenMode.ForRead);
-                    if (p.StartStructureId != ObjectId.Null)
+                    var network = tr.GetObject(netId, OpenMode.ForRead) as Autodesk.Civil.DatabaseServices.Network;
+                    if (network == null) continue;
+
+                    var hasDownstream = new HashSet<string>();
+                    foreach (ObjectId pid in network.GetPipeIds())
                     {
-                        var ss = (Autodesk.Civil.DatabaseServices.Structure)tr.GetObject(p.StartStructureId, OpenMode.ForRead);
-                        hasDownstream.Add(ss.Handle.ToString());
+                        var p = (Autodesk.Civil.DatabaseServices.Pipe)tr.GetObject(pid, OpenMode.ForRead);
+                        if (p.StartStructureId != ObjectId.Null)
+                        {
+                            var ss = (Autodesk.Civil.DatabaseServices.Structure)tr.GetObject(p.StartStructureId, OpenMode.ForRead);
+                            hasDownstream.Add(ss.Handle.ToString());
+                        }
                     }
-                }
-                foreach (ObjectId sid in network.GetStructureIds())
-                {
-                    var s = (Autodesk.Civil.DatabaseServices.Structure)tr.GetObject(sid, OpenMode.ForRead);
-                    string handle = s.Handle.ToString();
-                    bool isPond = !hasDownstream.Contains(handle);
-                    _structures.Add(new StructureRow
+                    foreach (ObjectId sid in network.GetStructureIds())
                     {
-                        Id = sid,
-                        Handle = handle,
-                        Name = s.Name,
-                        Kind = isPond ? "Pond" : "Inlet",
-                        Position = s.Position,
-                        Rim = s.RimElevation,
-                        IsSelected = true, // select-all default
-                    });
+                        var s = (Autodesk.Civil.DatabaseServices.Structure)tr.GetObject(sid, OpenMode.ForRead);
+                        string handle = s.Handle.ToString();
+                        bool isPond = !hasDownstream.Contains(handle);
+                        _structures.Add(new StructureRow
+                        {
+                            Id = sid,
+                            NetworkId = netId,
+                            NetworkName = network.Name,
+                            Handle = handle,
+                            Name = s.Name,
+                            Kind = isPond ? "Pond" : "Inlet",
+                            Position = s.Position,
+                            Rim = s.RimElevation,
+                            IsSelected = true,
+                        });
+                    }
                 }
                 tr.Commit();
             }
             UpdateCount();
-            Log($"Loaded {_structures.Count} structure(s) ({_structures.Count(x => x.Kind == "Pond")} ponds, {_structures.Count(x => x.Kind == "Inlet")} inlets).", Brushes.LightGray);
+            int ponds = _structures.Count(x => x.Kind == "Pond");
+            int inlets = _structures.Count(x => x.Kind == "Inlet");
+            int nets = _structures.Select(x => x.NetworkName).Distinct().Count();
+            Log($"Loaded {_structures.Count} structure(s) across {nets} network(s) ({ponds} ponds, {inlets} inlets).", Brushes.LightGray);
         }
 
         private void BtnSelectAll_Click(object sender, RoutedEventArgs e)
@@ -164,7 +146,6 @@ namespace CatchmentTool.UI
         private void BtnRun_Click(object sender, RoutedEventArgs e)
         {
             if (cmbSurface.SelectedItem is not SurfaceItem surf) { Log("Pick a surface.", Brushes.Yellow); return; }
-            if (cmbNetwork.SelectedItem is not NetworkItem net) { Log("Pick a pipe network.", Brushes.Yellow); return; }
             var selected = _structures.Where(s => s.IsSelected).ToList();
             if (selected.Count == 0) { Log("No pour-point structures selected.", Brushes.Yellow); return; }
 
@@ -174,7 +155,7 @@ namespace CatchmentTool.UI
                 txtStatus.Text = "Running…";
                 progress.Visibility = System.Windows.Visibility.Visible;
                 progress.IsIndeterminate = true;
-                Run(surf.Id, net.Id, selected);
+                Run(surf.Id, selected);
             }
             catch (System.Exception ex)
             {
@@ -188,23 +169,25 @@ namespace CatchmentTool.UI
             }
         }
 
-        private void Run(ObjectId surfaceId, ObjectId networkId, List<StructureRow> selected)
+        private void Run(ObjectId surfaceId, List<StructureRow> selected)
         {
-            // Read the TIN + pipe network into Core types and run the pipeline.
             Tin tin;
             List<CatchmentTool2.Network.Structure> structures;
             CatchmentTool2.Network.PipeNetwork cnet;
             var handleToObjectId = new Dictionary<string, ObjectId>();
+            var handleToNetworkId = new Dictionary<string, ObjectId>();
+
             using (var tr = _db.TransactionManager.StartTransaction())
             {
                 var surf = (TinSurface)tr.GetObject(surfaceId, OpenMode.ForRead);
                 tin = ReadTin(surf);
-                (structures, cnet, handleToObjectId) = ReadNetwork(tr, networkId, selected);
+                (structures, cnet, handleToObjectId, handleToNetworkId) = ReadAllNetworks(tr, selected);
                 tr.Commit();
             }
 
+            int netCount = selected.Select(s => s.NetworkName).Distinct().Count();
             Log($"TIN: {tin.Vertices.Count:N0} vertices, {tin.Triangles.Count:N0} triangles", Brushes.LightGray);
-            Log($"Network: {structures.Count} structures, {cnet.Pipes.Count} pipes", Brushes.LightGray);
+            Log($"Network: {structures.Count} structures, {cnet.Pipes.Count} pipes (across {netCount} network(s))", Brushes.LightGray);
             Log($"Selected pour-points: {structures.Count(s => s.UserSelected)}", Brushes.LightGray);
 
             var p = TunedDefaults.V2;
@@ -215,8 +198,7 @@ namespace CatchmentTool.UI
             Log($"  Voronoi fallback: {result.FallbackAssignedCells:N0} cells", Brushes.LightGray);
             Log($"  Off-site / unassigned: {result.UnassignedCells:N0} cells", Brushes.LightGray);
 
-            // Emit Civil 3D Catchment objects
-            int created = CatchmentEmitter.Emit(_doc, surfaceId, networkId, structures, result, handleToObjectId, Log);
+            int created = CatchmentEmitter.Emit(_doc, surfaceId, handleToNetworkId, structures, result, handleToObjectId, Log);
             Log($"Created {created} Civil 3D Catchment object(s).", Brushes.LightGreen);
         }
 
@@ -246,38 +228,47 @@ namespace CatchmentTool.UI
             return new Tin(verts, tris);
         }
 
-        private static (List<CatchmentTool2.Network.Structure>, CatchmentTool2.Network.PipeNetwork, Dictionary<string, ObjectId>)
-            ReadNetwork(Transaction tr, ObjectId networkId, List<StructureRow> selectedRows)
+        private static (List<CatchmentTool2.Network.Structure>, CatchmentTool2.Network.PipeNetwork,
+                        Dictionary<string, ObjectId>, Dictionary<string, ObjectId>)
+            ReadAllNetworks(Transaction tr, List<StructureRow> selectedRows)
         {
             var structures = new List<CatchmentTool2.Network.Structure>();
             var pipes = new List<CatchmentTool2.Network.Pipe>();
             var handleToId = new Dictionary<string, ObjectId>();
+            var handleToNetId = new Dictionary<string, ObjectId>();
             var selectedHandles = selectedRows.Select(r => r.Handle).ToHashSet();
 
-            var net = (Autodesk.Civil.DatabaseServices.Network)tr.GetObject(networkId, OpenMode.ForRead);
-            foreach (ObjectId sid in net.GetStructureIds())
+            // Load all structures/pipes from every network referenced in the table
+            var allNetworkIds = selectedRows.Select(r => r.NetworkId).Distinct();
+            foreach (var netId in allNetworkIds)
             {
-                var s = (Autodesk.Civil.DatabaseServices.Structure)tr.GetObject(sid, OpenMode.ForRead);
-                string handle = s.Handle.ToString();
-                handleToId[handle] = sid;
-                structures.Add(new CatchmentTool2.Network.Structure(
-                    Id: handle,
-                    Location: new Vec2(s.Position.X, s.Position.Y),
-                    RimElevation: s.RimElevation,
-                    Kind: CatchmentTool2.Network.StructureKind.Inlet,
-                    UserSelected: selectedHandles.Contains(handle)));
+                var net = (Autodesk.Civil.DatabaseServices.Network)tr.GetObject(netId, OpenMode.ForRead);
+                foreach (ObjectId sid in net.GetStructureIds())
+                {
+                    var s = (Autodesk.Civil.DatabaseServices.Structure)tr.GetObject(sid, OpenMode.ForRead);
+                    string handle = s.Handle.ToString();
+                    handleToId[handle] = sid;
+                    handleToNetId[handle] = netId;
+                    structures.Add(new CatchmentTool2.Network.Structure(
+                        Id: handle,
+                        Location: new Vec2(s.Position.X, s.Position.Y),
+                        RimElevation: s.RimElevation,
+                        Kind: CatchmentTool2.Network.StructureKind.Inlet,
+                        UserSelected: selectedHandles.Contains(handle)));
+                }
+                foreach (ObjectId pid in net.GetPipeIds())
+                {
+                    var p = (Autodesk.Civil.DatabaseServices.Pipe)tr.GetObject(pid, OpenMode.ForRead);
+                    string sid = p.StartStructureId == ObjectId.Null ? "" :
+                        ((Autodesk.Civil.DatabaseServices.Structure)tr.GetObject(p.StartStructureId, OpenMode.ForRead)).Handle.ToString();
+                    string eid = p.EndStructureId == ObjectId.Null ? "" :
+                        ((Autodesk.Civil.DatabaseServices.Structure)tr.GetObject(p.EndStructureId, OpenMode.ForRead)).Handle.ToString();
+                    if (string.IsNullOrEmpty(sid) || string.IsNullOrEmpty(eid)) continue;
+                    pipes.Add(new CatchmentTool2.Network.Pipe(p.Handle.ToString(), sid, eid, p.StartPoint.Z, p.EndPoint.Z));
+                }
             }
-            foreach (ObjectId pid in net.GetPipeIds())
-            {
-                var p = (Autodesk.Civil.DatabaseServices.Pipe)tr.GetObject(pid, OpenMode.ForRead);
-                string sid = p.StartStructureId == ObjectId.Null ? "" :
-                    ((Autodesk.Civil.DatabaseServices.Structure)tr.GetObject(p.StartStructureId, OpenMode.ForRead)).Handle.ToString();
-                string eid = p.EndStructureId == ObjectId.Null ? "" :
-                    ((Autodesk.Civil.DatabaseServices.Structure)tr.GetObject(p.EndStructureId, OpenMode.ForRead)).Handle.ToString();
-                if (string.IsNullOrEmpty(sid) || string.IsNullOrEmpty(eid)) continue;
-                pipes.Add(new CatchmentTool2.Network.Pipe(p.Handle.ToString(), sid, eid, p.StartPoint.Z, p.EndPoint.Z));
-            }
-            // Auto-classify Pond/Inlet by topology (no downstream pipe = Pond).
+
+            // Auto-classify Pond/Inlet by topology
             var hasDown = pipes.Select(x => x.StartStructureId).ToHashSet();
             var classified = structures.Select(s => s with
             {
@@ -285,7 +276,8 @@ namespace CatchmentTool.UI
                     ? CatchmentTool2.Network.StructureKind.Inlet
                     : CatchmentTool2.Network.StructureKind.Pond,
             }).ToList();
-            return (classified, new CatchmentTool2.Network.PipeNetwork(classified, pipes), handleToId);
+
+            return (classified, new CatchmentTool2.Network.PipeNetwork(classified, pipes), handleToId, handleToNetId);
         }
 
         private void Log(string msg, Brush color = null)
@@ -300,12 +292,13 @@ namespace CatchmentTool.UI
 
         // ---------- Item types ----------
         private class SurfaceItem { public ObjectId Id { get; set; } public string Name { get; set; } public override string ToString() => Name; }
-        private class NetworkItem { public ObjectId Id { get; set; } public string Name { get; set; } public override string ToString() => Name; }
     }
 
     public class StructureRow : INotifyPropertyChanged
     {
         public ObjectId Id { get; set; }
+        public ObjectId NetworkId { get; set; }
+        public string NetworkName { get; set; }
         public string Handle { get; set; }
         public string Name { get; set; }
         public string Kind { get; set; }
