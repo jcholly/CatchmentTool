@@ -36,7 +36,7 @@ namespace CatchmentTool.Services
             int created = 0;
 
             using var tr = db.TransactionManager.StartTransaction();
-            ObjectId groupId = GetOrCreateGroup(civilDoc, tr, $"CT_{DateTime.Now:HHmmss}");
+            ObjectId groupId = GetOrCreateGroup(civilDoc, db, tr, $"CT_{DateTime.Now:HHmmss}");
             ObjectId styleId = GetFirstCatchmentStyle(civilDoc);
             TinSurface tinSurf = null;
             try { tinSurf = tr.GetObject(surfaceId, OpenMode.ForRead) as TinSurface; }
@@ -83,30 +83,46 @@ namespace CatchmentTool.Services
             return coll;
         }
 
-        private static ObjectId GetOrCreateGroup(CivilDocument civilDoc, Transaction tr, string name)
+        private static ObjectId GetOrCreateGroup(CivilDocument civilDoc, Database db, Transaction tr, string name)
+        {
+            ObjectId siteId = GetOrCreateSite(civilDoc);
+
+            var createMethods = typeof(CatchmentGroup).GetMethods(
+                BindingFlags.Public | BindingFlags.Static)
+                .Where(m => m.Name == "Create").ToList();
+
+            foreach (var method in createMethods)
+            {
+                var parms = method.GetParameters();
+                object[] args = null;
+                if (parms.Length == 2 && parms[0].ParameterType == typeof(ObjectId) && !siteId.IsNull)
+                    args = new object[] { siteId, name };
+                else if (parms.Length == 2 && parms[1].ParameterType == typeof(ObjectId) && !siteId.IsNull)
+                    args = new object[] { name, siteId };
+                else if (parms.Length == 2 && parms[0].ParameterType == typeof(Database))
+                    args = new object[] { db, name };
+                else if (parms.Length == 1 && parms[0].ParameterType == typeof(string))
+                    args = new object[] { name };
+                if (args == null) continue;
+                try
+                {
+                    var r = method.Invoke(null, args);
+                    if (r is ObjectId id && !id.IsNull) return id;
+                }
+                catch { }
+            }
+            return ObjectId.Null;
+        }
+
+        private static ObjectId GetOrCreateSite(CivilDocument civilDoc)
         {
             try
             {
-                var prop = civilDoc.GetType().GetProperty("CatchmentGroups");
-                if (prop != null)
-                {
-                    var groups = prop.GetValue(civilDoc);
-                    if (groups != null)
-                    {
-                        var addMethod = groups.GetType().GetMethod("Add", new[] { typeof(string) });
-                        if (addMethod != null)
-                        {
-                            var r = addMethod.Invoke(groups, new object[] { name });
-                            if (r is ObjectId id && !id.IsNull) return id;
-                        }
-                        foreach (ObjectId gid in (System.Collections.IEnumerable)groups)
-                        {
-                            var g = (CatchmentGroup)tr.GetObject(gid, OpenMode.ForRead);
-                            if (g.Name == name) return gid;
-                        }
-                    }
-                }
+                var siteIds = civilDoc.GetSiteIds();
+                if (siteIds.Count > 0) return siteIds[0];
             }
+            catch { }
+            try { return Site.Create(civilDoc, "Catchment Sites"); }
             catch { }
             return ObjectId.Null;
         }

@@ -299,8 +299,8 @@ namespace CatchmentTool.UI
         }
 
         // ---------- Item types ----------
-        private class SurfaceItem { public ObjectId Id; public string Name; public override string ToString() => Name; }
-        private class NetworkItem { public ObjectId Id; public string Name; public override string ToString() => Name; }
+        private class SurfaceItem { public ObjectId Id { get; set; } public string Name { get; set; } public override string ToString() => Name; }
+        private class NetworkItem { public ObjectId Id { get; set; } public string Name { get; set; } public override string ToString() => Name; }
     }
 
     public class StructureRow : INotifyPropertyChanged
