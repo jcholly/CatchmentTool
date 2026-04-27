@@ -16,26 +16,26 @@ namespace CatchmentTool.Services
             // Phase 1 — boundary
             BoundarySource             = BoundarySource.StructureBufferHull,
             StructureBufferDistance    = 50.0,
-            // Phase 2 — raster
-            CellSize                   = 13.2,   // best-of-tuning seed 1
+            // Phase 2 — raster: 1 ft cell locked, urban-hydrology resolution
+            CellSize                   = 1.0,
             // Phase 3 — conditioning
-            InletSnapRadiusCells       = 6.04,
-            InletSnapDepth             = 0.30,
-            DepressionHandling         = DepressionHandling.Fill,
-            MaxBreachDepth             = 2.79,
-            PondCaptureRadiusCells     = 3.74,
-            PipeBurnDepth              = 1.5,    // standard MS4 GIS practice
+            InletSnapRadiusCells       = 90.53,
+            InletSnapDepth             = 0.55,
+            DepressionHandling         = DepressionHandling.Breach,
+            MaxBreachDepth             = 3.78,
+            PondCaptureRadiusCells     = 42.37,
+            PipeBurnDepth              = 3.48,
             // Phase 4 — routing
             RoutingAlgorithm           = RoutingAlgorithm.D8,
-            MinSlopeThreshold          = 0.001,
+            MinSlopeThreshold          = 0.0,
             // Phase 5 — fallback
             FallbackMetric             = FallbackMetric.DownhillWeighted,
-            DownhillBiasWeight         = 0.59,
+            DownhillBiasWeight         = 2.44,
             DownhillBiasLengthScale    = 100.0,
-            MinCatchmentArea           = 191.0,
+            MinCatchmentArea           = 105.52,
             // Phase 7 — smoothing (note: Phase7 also forces 2 Chaikin iterations
             // unconditionally for plan presentability, even when this is 0).
-            RdpToleranceCellMultiplier = 0.22,
+            RdpToleranceCellMultiplier = 2.63,
             ChaikinIterations          = 0,
             MaxAreaDriftPercent        = 2.0,
         };
