@@ -1,0 +1,19 @@
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Tuner runs (generated output, ~345MB)
+runs/
+
+# Large LandXML fixtures (over GitHub size limits)
+test_data/landxml/testing5.xml
+test_data/landxml/testing6_javier.xml
+
+# OS
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json

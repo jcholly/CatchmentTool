@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Civil 3D NETLOAD plugin. Targets net8.0-windows (Civil 3D 2025+).
+    For Civil 3D 2024 and earlier, change TargetFramework to net48.
+
+    Civil 3D reference assemblies are loaded from the running AutoCAD process.
+    Set the HintPath properties to your local Civil 3D installation, or set
+    AutoCADRefPath / Civil3DRefPath as MSBuild properties.
+
+    To NETLOAD: build this project, then in Civil 3D type:
+        NETLOAD
+    and select bin/Release/net8.0-windows/CatchmentTool2.Cad.dll.
+    Then run the command:
+        CT2_DELINEATE
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>false</UseWindowsForms>
+    <UseWPF>false</UseWPF>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
+    <RootNamespace>CatchmentTool2.Cad</RootNamespace>
+    <AssemblyName>CatchmentTool2.Cad</AssemblyName>
+    <AutoCADRefPath Condition="'$(AutoCADRefPath)' == ''">C:\Program Files\Autodesk\AutoCAD 2026</AutoCADRefPath>
+    <Civil3DRefPath Condition="'$(Civil3DRefPath)' == ''">C:\Program Files\Autodesk\AutoCAD 2026\C3D</Civil3DRefPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CatchmentTool2.Core\CatchmentTool2.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="acmgd">
+      <HintPath>$(AutoCADRefPath)\acmgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="acdbmgd">
+      <HintPath>$(AutoCADRefPath)\acdbmgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="accoremgd">
+      <HintPath>$(AutoCADRefPath)\accoremgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AeccDbMgd">
+      <HintPath>$(Civil3DRefPath)\AeccDbMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
