@@ -8,9 +8,8 @@ obj/
 # Tuner runs (generated output, ~345MB)
 runs/
 
-# Large LandXML fixtures (over GitHub size limits)
-test_data/landxml/testing5.xml
-test_data/landxml/testing6_javier.xml
+# LandXML fixtures (real-site exports — kept local only)
+*.xml
 
 # OS
 .DS_Store
